@@ -1,0 +1,14 @@
+[Desktop Entry]
+Name=Bluetooth Monitor
+Comment=Batteries and connections of wireless mice, keyboards, earphones and controllers
+Type=Application
+Exec=cosmic-bluetooth-monitor
+Terminal=false
+Categories=COSMIC;
+Keywords=COSMIC;Applet;Bluetooth;Battery;Mouse;Keyboard;Logitech;
+Icon=io.github.ubruckhaus.CosmicBluetoothMonitor-symbolic
+NoDisplay=true
+X-CosmicApplet=true
+X-HostWaylandDisplay=true
+X-CosmicHoverPopup=Auto
+X-OverflowPriority=10
