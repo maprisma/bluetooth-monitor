@@ -1,4 +1,4 @@
-# Bluetooth Monitor for COSMIC
+# Maprisma Bluetooth Monitor for COSMIC
 
 Every wireless device at a glance: battery and connection, in the COSMIC panel. A native libcosmic
 panel applet, ported from the GNOME extension
@@ -29,7 +29,7 @@ Needs Rust (cargo), `python3`, `bluetoothctl`, `busctl`, `upower`, `rfkill` and,
 ./install.sh
 ```
 
-It installs into `~/.local` (binary, `share/cosmic-bluetooth-monitor/scripts`, the desktop entry with an
+It installs into `~/.local` (binary, `share/maprisma-bluetooth-monitor/scripts`, the desktop entry with an
 absolute Exec path, the icon). Then add **Bluetooth Monitor** in COSMIC Settings › Desktop › Panel › Applets.
 
 ## How it works
@@ -39,7 +39,7 @@ absolute Exec path, the icon). Then add **Bluetooth Monitor** in COSMIC Settings
 - The Bluetooth page reads BlueZ's objects with `busctl --system --json=short … GetManagedObjects` (read
   only) every two seconds while it is open. Changes go through `scripts/bt-device.sh`, `scripts/bt-power.sh`
   and `scripts/audio-default.py` with a fixed argv and a checked address.
-- Settings (levels, other devices, hidden devices) are in `~/.config/cosmic-bluetooth-monitor/settings.json`;
+- Settings (levels, other devices, hidden devices) are in `~/.config/maprisma-bluetooth-monitor/settings.json`;
   the helper keeps the Logitech settings you changed in `~/.config/bluetooth-monitor/settings.json`.
 
 ## Development

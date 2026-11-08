@@ -38,7 +38,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
-const APP_ID: &str = "io.github.ubruckhaus.CosmicBluetoothMonitor";
+const APP_ID: &str = "io.github.ubruckhaus.CosmicMaprismaBluetoothMonitor";
 static AUTOSIZE_ID: LazyLock<Id> = LazyLock::new(|| Id::new("bluetooth-monitor-autosize"));
 
 const RESTART_DELAY: Duration = Duration::from_secs(5); // before a helper that exited starts again
@@ -212,7 +212,7 @@ fn config_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("cosmic-bluetooth-monitor/settings.json"))
+    Some(base.join("maprisma-bluetooth-monitor/settings.json"))
 }
 
 impl Settings {
@@ -636,7 +636,7 @@ impl Monitor {
         };
         let mut head = row![
             tinted(APP_ICON, 32, None, if online > 0 { 1.0 } else { DIM }),
-            column![text::title4("Bluetooth Monitor"), dim(meta)].spacing(2),
+            column![text::title4("Maprisma Bluetooth Monitor"), dim(meta)].spacing(2),
             space::horizontal().width(Length::Fill),
         ]
         .spacing(12)
@@ -1187,7 +1187,7 @@ impl Monitor {
     }
 }
 
-const APP_ICON: &str = "io.github.ubruckhaus.CosmicBluetoothMonitor-symbolic";
+const APP_ICON: &str = "io.github.ubruckhaus.CosmicMaprismaBluetoothMonitor-symbolic";
 
 // A device with a list of DPI values (not evenly spaced) only takes those; else
 // min..max in steps.
@@ -1478,7 +1478,7 @@ impl Monitor {
 
 // ------------------------------------------------------------------------- processes
 
-// Next to the binary (installed: ../share/cosmic-bluetooth-monitor/scripts), or in
+// Next to the binary (installed: ../share/maprisma-bluetooth-monitor/scripts), or in
 // the data home; BLUETOOTH_MONITOR_SCRIPTS wins (development).
 fn script_path(name: &str) -> Option<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
@@ -1488,15 +1488,15 @@ fn script_path(name: &str) -> Option<PathBuf> {
     if let Ok(exe) = std::env::current_exe()
         && let Some(bin) = exe.parent()
     {
-        dirs.push(bin.join("../share/cosmic-bluetooth-monitor/scripts"));
+        dirs.push(bin.join("../share/maprisma-bluetooth-monitor/scripts"));
     }
     let data_home = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
     if let Some(data) = data_home {
-        dirs.push(data.join("cosmic-bluetooth-monitor/scripts"));
+        dirs.push(data.join("maprisma-bluetooth-monitor/scripts"));
     }
-    dirs.push("/usr/share/cosmic-bluetooth-monitor/scripts".into());
+    dirs.push("/usr/share/maprisma-bluetooth-monitor/scripts".into());
     dirs.into_iter().map(|d| d.join(name)).find(|p| p.is_file())
 }
 

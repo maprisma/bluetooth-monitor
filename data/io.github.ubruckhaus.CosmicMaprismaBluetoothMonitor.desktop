@@ -1,12 +1,12 @@
 [Desktop Entry]
-Name=Bluetooth Monitor
+Name=Maprisma Bluetooth Monitor
 Comment=Batteries and connections of wireless mice, keyboards, earphones and controllers
 Type=Application
-Exec=cosmic-bluetooth-monitor
+Exec=maprisma-bluetooth-monitor
 Terminal=false
 Categories=COSMIC;
 Keywords=COSMIC;Applet;Bluetooth;Battery;Mouse;Keyboard;Logitech;
-Icon=io.github.ubruckhaus.CosmicBluetoothMonitor-symbolic
+Icon=io.github.ubruckhaus.CosmicMaprismaBluetoothMonitor-symbolic
 NoDisplay=true
 X-CosmicApplet=true
 X-HostWaylandDisplay=true
