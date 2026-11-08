@@ -1,3 +1,6 @@
+mod shared;
+mod window_control;
+use shared::script_path;
 // Bluetooth Monitor for COSMIC: batteries and connections of wireless mice,
 // keyboards, trackpads, earphones and controllers in the panel. The icon is
 // green while every connected battery is fine, orange when one runs low and red
@@ -23,7 +26,6 @@ use std::time::{Duration, Instant};
 
 use cosmic::app::{Core, Task};
 use cosmic::applet::cosmic_panel_config::PanelAnchor;
-use cosmic::applet::padded_control;
 use cosmic::iced::futures::SinkExt;
 use cosmic::iced::futures::channel::mpsc;
 use cosmic::iced::platform_specific::shell::wayland::commands::popup::destroy_popup;
@@ -56,7 +58,21 @@ const LOW: Color = Color::from_rgb(1.0, 0x78 as f32 / 255.0, 0.0);
 const CRITICAL: Color = Color::from_rgb(0xe0 as f32 / 255.0, 0x1b as f32 / 255.0, 0x24 as f32 / 255.0);
 
 fn main() -> cosmic::iced::Result {
-    cosmic::applet::run::<Monitor>(())
+    if std::env::args().any(|arg| arg == "--window") {
+        let connection = zbus::blocking::connection::Builder::session().expect("session bus")
+            .serve_at("/Window", window_control::WindowControl).expect("window control")
+            .build().expect("session bus connection");
+        if connection.request_name_with_flags(shared::WINDOW_BUS, zbus::fdo::RequestNameFlags::DoNotQueue.into()).is_err() {
+            return Ok(());
+        }
+        let result = cosmic::app::run::<Monitor>(cosmic::app::Settings::default()
+            .size(cosmic::iced::Size::new(POPUP_WIDTH, POPUP_MAX_HEIGHT))
+            .resizable(Some(8.0)).transparent(false).is_daemon(false), true);
+        drop(connection);
+        result
+    } else {
+        cosmic::applet::run::<Monitor>(false)
+    }
 }
 
 // ------------------------------------------------------------------------- values
@@ -446,6 +462,7 @@ enum Page {
 #[derive(Default)]
 struct Monitor {
     core: Core,
+    window_mode: bool,
     popup: Option<window::Id>,
     rectangle: Rectangle,
     tracker: Option<RectangleTracker<u32>>,
@@ -468,6 +485,7 @@ struct Monitor {
 
 #[derive(Debug, Clone)]
 enum Message {
+    WindowTick,
     Snapshot(Value),
     HelperStarted(UnboundedSender<String>),
     TogglePopup,
@@ -565,7 +583,7 @@ impl Monitor {
     }
 
     fn scanning(&self) -> bool {
-        self.popup.is_some() && self.page == Page::Bluetooth && self.bt.powered
+        (self.window_mode || self.popup.is_some()) && self.page == Page::Bluetooth && self.bt.powered
     }
 
     fn set_page(&mut self, page: Page) -> Task<Message> {
@@ -1204,7 +1222,7 @@ fn snap_dpi(dpi: &Value, raw: f64) -> i64 {
 
 impl cosmic::Application for Monitor {
     type Executor = cosmic::SingleThreadExecutor;
-    type Flags = ();
+    type Flags = bool;
     type Message = Message;
     const APP_ID: &'static str = APP_ID;
 
@@ -1216,8 +1234,14 @@ impl cosmic::Application for Monitor {
         &mut self.core
     }
 
-    fn init(core: Core, _flags: ()) -> (Self, Task<Message>) {
-        (Self { core, settings: Settings::load(), ..Default::default() }, Task::none())
+    fn init(core: Core, window_mode: bool) -> (Self, Task<Message>) {
+        let mut app = Self { core, window_mode, settings: Settings::load(), ..Default::default() };
+        let task = if window_mode {
+            use cosmic::ApplicationExt;
+            app.set_header_title(shared::APP_NAME.into());
+            app.set_window_title(shared::APP_NAME.into(), app.core.main_window_id().unwrap())
+        } else { Task::none() };
+        (app, task)
     }
 
     fn on_close_requested(&self, id: window::Id) -> Option<Message> {
@@ -1226,18 +1250,22 @@ impl cosmic::Application for Monitor {
 
     fn subscription(&self) -> Subscription<Message> {
         let mut subscriptions = vec![
-            rectangle_tracker_subscription(0).map(|update| Message::Rectangle(update.1)),
             Subscription::run_with("bluetooth-monitor-helper", |_| {
                 stream::channel(4, |mut output| async move {
                     run_helper(&mut output).await;
                 })
             }),
         ];
+        if self.window_mode {
+            subscriptions.push(cosmic::iced::time::every(Duration::from_millis(200)).map(|_| Message::WindowTick));
+        } else {
+            subscriptions.push(rectangle_tracker_subscription(0).map(|update| Message::Rectangle(update.1)));
+        }
         // The Bluetooth page: BlueZ's list every two seconds, and a scan while it is on
         // screen. The scan is bluetoothctl's own discovery session: BlueZ ends it the
         // moment the process exits, which happens as soon as this subscription goes
         // (page left, popup closed, applet gone): an endless scan makes audio stutter.
-        if (self.popup.is_some() && self.page == Page::Bluetooth) || !self.pending.is_empty() {
+        if ((self.window_mode || self.popup.is_some()) && self.page == Page::Bluetooth) || !self.pending.is_empty() {
             subscriptions.push(cosmic::iced::time::every(BLUEZ_POLL).map(|_| Message::BtTick));
         }
         if self.scanning() {
@@ -1252,12 +1280,17 @@ impl cosmic::Application for Monitor {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::WindowTick => {
+                if window_control::CLOSE_WINDOW.load(std::sync::atomic::Ordering::Relaxed) {
+                    return cosmic::iced::exit();
+                }
+            }
             Message::Snapshot(stats) => self.stats = stats,
             Message::HelperStarted(sender) => {
                 self.helper = Some(sender);
                 // The helper (re)started: tell it the options and whether the panel is open.
                 self.send(json!({"cmd": "options", "other_devices": self.settings.other_devices}));
-                if self.popup.is_some() {
+                if self.window_mode || self.popup.is_some() {
                     self.send(json!({"cmd": "open"}));
                 }
             }
@@ -1266,12 +1299,14 @@ impl cosmic::Application for Monitor {
                 RectangleUpdate::Init(tracker) => self.tracker = Some(tracker),
             },
             Message::CloseRequested(id) => {
+                if self.window_mode { return cosmic::iced::exit(); }
                 if self.popup == Some(id) {
                     self.popup = None;
                     self.send(json!({"cmd": "closed"}));
                 }
             }
             Message::TogglePopup => {
+                if self.window_mode { return Task::none(); }
                 if let Some(popup) = self.popup.take() {
                     self.send(json!({"cmd": "closed"}));
                     return destroy_popup(popup);
@@ -1434,6 +1469,7 @@ impl cosmic::Application for Monitor {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        if self.window_mode { return self.popup_content(); }
         let horizontal = matches!(self.core.applet.anchor, PanelAnchor::Top | PanelAnchor::Bottom);
         let padding = self.core.applet.suggested_padding(true).0;
         let button = button::custom(self.panel_content())
@@ -1450,29 +1486,30 @@ impl cosmic::Application for Monitor {
     }
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
-        self.popup_view()
+        if self.window_mode { return self.popup_content(); }
+        self.core.applet.popup_container(self.popup_content()).into()
     }
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
-        Some(cosmic::applet::style())
+        if self.window_mode { None } else { Some(cosmic::applet::style()) }
     }
 }
 
 impl Monitor {
-    fn popup_view(&self) -> Element<'_, Message> {
+    fn popup_content(&self) -> Element<'_, Message> {
         let body = match self.page {
             Page::Main => self.main_page(),
             Page::Settings => self.settings_page(),
             Page::Bluetooth => self.bluetooth_page(),
         };
         let inner = column![self.header(), divider::horizontal::default(), body].spacing(10);
-        let details = scrollable(padded_control(inner).padding([12, 16])).height(Length::Shrink);
-        let mut content = column![container(details).max_height(POPUP_MAX_HEIGHT)].width(Length::Fixed(POPUP_WIDTH));
+        let details = scrollable(container(inner).width(Length::Fill).padding([12, 16])).height(if self.window_mode { Length::Fill } else { Length::Shrink });
+        let mut content = column![container(details).max_height(if self.window_mode { f32::INFINITY } else { POPUP_MAX_HEIGHT })].width(if self.window_mode { Length::Fill } else { Length::Fixed(POPUP_WIDTH) });
         if self.page == Page::Main {
             content = content.push(divider::horizontal::default());
             content = content.push(container(self.footer()).padding([8, 16]));
         }
-        self.core.applet.popup_container(content.padding([0, 0, 8, 0])).into()
+        content.padding([0, 0, 8, 0]).height(if self.window_mode { Length::Fill } else { Length::Shrink }).into()
     }
 }
 
@@ -1480,26 +1517,6 @@ impl Monitor {
 
 // Next to the binary (installed: ../share/maprisma-bluetooth-monitor/scripts), or in
 // the data home; BLUETOOTH_MONITOR_SCRIPTS wins (development).
-fn script_path(name: &str) -> Option<PathBuf> {
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Some(dir) = std::env::var_os("BLUETOOTH_MONITOR_SCRIPTS") {
-        dirs.push(dir.into());
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(bin) = exe.parent()
-    {
-        dirs.push(bin.join("../share/maprisma-bluetooth-monitor/scripts"));
-    }
-    let data_home = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
-    if let Some(data) = data_home {
-        dirs.push(data.join("maprisma-bluetooth-monitor/scripts"));
-    }
-    dirs.push("/usr/share/maprisma-bluetooth-monitor/scripts".into());
-    dirs.into_iter().map(|d| d.join(name)).find(|p| p.is_file())
-}
-
 // Runs the helper, streams its snapshots and writes the panel's commands to its stdin;
 // starts it again RESTART_DELAY after it exits.
 async fn run_helper(output: &mut mpsc::Sender<Message>) {

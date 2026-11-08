@@ -50,3 +50,21 @@ cargo test -- --ignored --nocapture                                         # re
 ```
 
 Licensed under [MIT](LICENSE).
+
+## KDE Plasma
+
+On KDE Plasma 6.8 (Wayland), run `./install.sh`, then launch **Maprisma Bluetooth
+Monitor** from the application launcher. `maprisma-bluetooth-monitor --window`
+opens the same libcosmic UI as the COSMIC popup, in a resizable window. Only one
+window runs per session; launching it again leaves the existing window open.
+The window uses the same settings, helper and controls, including Bluetooth scans
+while its Bluetooth page is visible.
+
+The installer also installs `maprisma-bluetooth-monitor-tray` and a KDE-only
+entry in `${XDG_CONFIG_HOME:-~/.config}/autostart`. Log in again or start that
+binary manually. Left click toggles the window; its menu offers **Open Maprisma
+Bluetooth Monitor** and **Quit tray** (which leaves an open window running).
+The tooltip reports connected devices and their lowest battery, respecting hidden
+devices. The tray runs the shared helper in its cheaper closed mode and reconnects
+when Plasma's tray watcher restarts. Both binaries require a session D-Bus.
+COSMIC continues to use the original panel applet entry and popup.

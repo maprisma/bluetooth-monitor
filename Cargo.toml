@@ -5,7 +5,12 @@ edition = "2024"
 license = "MIT"
 description = "COSMIC panel applet: batteries and connections of wireless mice, keyboards, earphones and controllers"
 
+[[bin]]
+name = "maprisma-bluetooth-monitor-tray"
+path = "src/tray/main.rs"
+
 [dependencies]
+zbus = "5"
 serde_json = "1"
 tokio = { version = "1", features = ["process", "io-util", "time", "macros", "rt", "sync"] }
 
