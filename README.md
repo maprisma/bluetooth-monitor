@@ -1,9 +1,8 @@
 # Maprisma Bluetooth Monitor for COSMIC
 
 Every wireless device at a glance: battery and connection, in the COSMIC panel. A native libcosmic
-panel applet, ported from the GNOME extension
-[gnome-bluetooth-monitor](https://github.com/uBruckhaus/gnome-bluetooth-monitor) (itself the port of the
-Omarchy widget), with the same Python helper.
+panel applet and one of the [Maprisma](https://github.com/maprisma) apps: the COSMIC port of the
+Omarchy widget, which stays as it is, with the same Python helper.
 
 - **Panel icon:** green while every battery is fine, orange when one runs low, red when one is critical. It
   turns into the device that needs charging (mouse on a tie) and is dim while nothing is connected. Left
@@ -17,7 +16,7 @@ Omarchy widget), with the same Python helper.
   BlueZ stops when the page closes), pair, connect, disconnect, forget (asks twice). A headset or speaker
   that connects becomes the audio output.
 - **Settings:** low and critical battery levels, whether other Bluetooth devices are listed, receiver
-  access ("Allow access" installs the uaccess udev rule through `pkexec`, as in the GNOME port).
+  access ("Allow access" installs the uaccess udev rule through `pkexec`).
 
 English only. COSMIC's own Bluetooth applet stays the Bluetooth switch; this one is the battery monitor.
 
@@ -34,7 +33,7 @@ absolute Exec path, the icon). Then add **Bluetooth Monitor** in COSMIC Settings
 
 ## How it works
 
-- `scripts/bluetooth-monitor.py` (unchanged from the GNOME port) runs while the applet runs: JSON commands
+- `scripts/bluetooth-monitor.py` runs while the applet runs: JSON commands
   on stdin (open, closed, refresh, options, set), JSON snapshots on stdout.
 - The Bluetooth page reads BlueZ's objects with `busctl --system --json=short … GetManagedObjects` (read
   only) every two seconds while it is open. Changes go through `scripts/bt-device.sh`, `scripts/bt-power.sh`
