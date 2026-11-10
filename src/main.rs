@@ -2,6 +2,8 @@ mod i18n;
 use i18n::{tr, trf};
 mod shared;
 mod window_control;
+mod shot;
+mod corners;
 use shared::script_path;
 // Bluetooth Monitor for COSMIC: batteries and connections of wireless mice,
 // keyboards, trackpads, earphones and controllers in the panel. The icon is
@@ -43,6 +45,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 const APP_ID: &str = "io.github.ubruckhaus.CosmicMaprismaBluetoothMonitor";
+static NOTE_ID: LazyLock<cosmic::widget::Id> = LazyLock::new(|| cosmic::widget::Id::new("bluetooth-monitor-shot-note"));
+// F12 pictures go to ~/Pictures/<this>/ (the app's name, the same in every language).
+const SHOT_FOLDER: &str = "Maprisma Bluetooth Monitor";
 static AUTOSIZE_ID: LazyLock<Id> = LazyLock::new(|| Id::new("bluetooth-monitor-autosize"));
 
 const RESTART_DELAY: Duration = Duration::from_secs(5); // before a helper that exited starts again
@@ -232,11 +237,14 @@ struct Settings {
     critical_at: i64,
     other_devices: bool,
     hidden: BTreeSet<String>,
+    // F12 saves a screenshot (on by default) and Corners ("desktop" by default).
+    screenshot_key: bool,
+    corners: String,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { language: "auto".into(), low_at: 25, critical_at: 10, other_devices: true, hidden: BTreeSet::new() }
+        Self { language: "auto".into(), low_at: 25, critical_at: 10, other_devices: true, hidden: BTreeSet::new(), screenshot_key: true, corners: "desktop".into() }
     }
 }
 
@@ -262,6 +270,10 @@ impl Settings {
             out.other_devices = b;
         }
         out.language = v["language"].as_str().filter(|c| *c == "auto" || i18n::supported(c)).unwrap_or("auto").to_string();
+        if let Some(b) = v.get("screenshot_key").and_then(Value::as_bool) {
+            out.screenshot_key = b;
+        }
+        out.corners = corners::normalize(v.get("corners").and_then(Value::as_str).unwrap_or("")).to_string();
         out.hidden = list(&v, "hidden").iter().filter_map(Value::as_str).take(500).map(str::to_string).collect();
         out
     }
@@ -273,13 +285,18 @@ impl Settings {
         if std::fs::create_dir_all(dir).is_err() {
             return;
         }
-        let data = json!({
+        let mut data = json!({
             "language": self.language,
             "low_at": self.low_at,
             "critical_at": self.critical_at,
             "other_devices": self.other_devices,
             "hidden": self.hidden.iter().collect::<Vec<_>>(),
+            "screenshot_key": self.screenshot_key,
         });
+        // "Like the desktop" is the default: no key in the file.
+        if self.corners != "desktop" {
+            data["corners"] = json!(self.corners);
+        }
         let tmp = dir.join(format!(".settings.json.{}", std::process::id()));
         if std::fs::write(&tmp, format!("{data:#}\n")).is_ok() && std::fs::rename(&tmp, &path).is_err() {
             let _ = std::fs::remove_file(&tmp);
@@ -420,24 +437,28 @@ fn section<'a>(title: &str) -> Element<'a, Message> {
 }
 
 fn card_style(online: bool) -> theme::Container<'static> {
+    let radius = corners::now().radius;
     theme::Container::custom(move |theme: &cosmic::Theme| {
         let mut color = Color::from(theme.cosmic().on_bg_color());
         color.a = if online { 0.07 } else { 0.03 };
         iced_container::Style {
             background: Some(Background::Color(color)),
-            border: Border { radius: 10.0.into(), ..Default::default() },
+            // Settings › Corners: cards take the full radius.
+            border: Border { radius: radius.into(), ..Default::default() },
             ..Default::default()
         }
     })
 }
 
 fn pill_style() -> theme::Container<'static> {
-    theme::Container::custom(|theme: &cosmic::Theme| {
+    // Settings › Corners: round, or square in Square.
+    let radius = corners::now().pill;
+    theme::Container::custom(move |theme: &cosmic::Theme| {
         let mut color = Color::from(theme.cosmic().on_bg_color());
         color.a = 0.12;
         iced_container::Style {
             background: Some(Background::Color(color)),
-            border: Border { radius: 10.0.into(), ..Default::default() },
+            border: Border { radius: radius.into(), ..Default::default() },
             ..Default::default()
         }
     })
@@ -499,6 +520,9 @@ struct Monitor {
     finished: Vec<String>,
     // A slider being dragged: (device id, key) -> value, written when let go.
     dragging: HashMap<(String, &'static str), f64>,
+    // F12: the note's state, whether a capture is on its way.
+    shot: shot::Phase,
+    capturing: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -530,6 +554,29 @@ enum Message {
     BtActionDone(String),
     BtPower(bool),
     Forget(String),
+    ShotKey(window::Id),
+    Escape,
+    Captured(window::Screenshot),
+    ShotSaved(Result<shot::Saved, String>),
+    NoteInput(String),
+    NoteDone,
+    NoteSaved(Result<(), String>),
+    SetShotKey(bool),
+    Corners(String),
+}
+
+// Runs `work` on its own thread (saving must not hold up the popup) and answers with `done`.
+fn off_thread<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+    done: fn(Result<T, String>) -> Message,
+) -> Task<Message> {
+    let (sender, receiver) = cosmic::iced::futures::channel::oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(work());
+    });
+    Task::perform(receiver, move |result| {
+        cosmic::Action::App(done(result.unwrap_or_else(|_| Err("the file could not be written".into()))))
+    })
 }
 
 impl Monitor {
@@ -1118,6 +1165,25 @@ impl Monitor {
                 toggler(st.other_devices).on_toggle(Message::OtherDevices).into(),
             ),
             setting_row(tr("Receiver access"), if missing { tr("Not granted") } else { tr("Granted") }, access),
+            divider::horizontal::default(),
+            setting_row(tr("F12 saves a screenshot"), "", toggler(st.screenshot_key).on_toggle(Message::SetShotKey).into()),
+            column![
+                text::body(tr("Corners")),
+                column([
+                    ("desktop", trf("Like the desktop ({0} px)", &[corners::desktop_radius().round().to_string()])),
+                    ("slight", trf("Slightly rounded ({0} px)", &["6".into()])),
+                    ("rounded", trf("Rounded ({0} px)", &["12".into()])),
+                    ("square", tr("Square").to_string()),
+                ]
+                .into_iter()
+                .map(|(choice, label)| {
+                    let chosen = st.corners == choice;
+                    let b = if chosen { button::suggested(label) } else { button::standard(label) };
+                    b.on_press_maybe((!chosen).then(|| Message::Corners(choice.into()))).into()
+                }))
+                .spacing(4),
+            ]
+            .spacing(4),
         ]
         .spacing(12)
         .into()
@@ -1261,6 +1327,7 @@ impl cosmic::Application for Monitor {
     fn init(core: Core, window_mode: bool) -> (Self, Task<Message>) {
         let mut app = Self { core, window_mode, settings: Settings::load(), ..Default::default() };
         i18n::set_language(&app.settings.language);
+        corners::set_current(&app.settings.corners);
         let task = if window_mode {
             use cosmic::ApplicationExt;
             app.set_header_title(tr("Maprisma Bluetooth Monitor").into());
@@ -1287,6 +1354,19 @@ impl cosmic::Application for Monitor {
         } else {
             subscriptions.push(rectangle_tracker_subscription(0).map(|update| Message::Rectangle(update.1)));
         }
+        // F12 (no modifiers) in the popup or window; Esc skips the screenshot's note.
+        subscriptions.push(cosmic::iced::event::listen_with(|event, _, id| match event {
+            cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                if shot::is_shot_key(&key, modifiers) {
+                    Some(Message::ShotKey(id))
+                } else if matches!(key, cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape)) {
+                    Some(Message::Escape)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }));
         // The Bluetooth page: BlueZ's list every two seconds, and a scan while it is on
         // screen. The scan is bluetoothctl's own discovery session: BlueZ ends it the
         // moment the process exits, which happens as soon as this subscription goes
@@ -1308,6 +1388,12 @@ impl cosmic::Application for Monitor {
         match message {
             Message::LanguageTick => {
                 let settings = Settings::load();
+                // F12 and Corners changed in another interface (window, applet) take effect here too.
+                self.settings.screenshot_key = settings.screenshot_key;
+                if self.settings.corners != settings.corners {
+                    corners::set_current(&settings.corners);
+                    self.settings.corners = settings.corners.clone();
+                }
                 if self.settings.language != settings.language {
                     self.settings = settings;
                     i18n::set_language(&self.settings.language);
@@ -1341,19 +1427,25 @@ impl cosmic::Application for Monitor {
                 if self.popup == Some(id) {
                     self.popup = None;
                     self.send(json!({"cmd": "closed"}));
+                    return self.popup_closed();
                 }
             }
             Message::TogglePopup => {
                 if self.window_mode { return Task::none(); }
                 if let Some(popup) = self.popup.take() {
                     self.send(json!({"cmd": "closed"}));
-                    return destroy_popup(popup);
+                    return Task::batch([self.popup_closed(), destroy_popup(popup)]);
                 }
+                let focus = if matches!(self.shot, shot::Phase::Note { .. }) {
+                    cosmic::widget::text_input::focus(NOTE_ID.clone())
+                } else {
+                    Task::none()
+                };
                 self.page = Page::Main;
                 self.show_hidden = false;
                 self.confirm_forget.clear();
                 self.send(json!({"cmd": "open"}));
-                return cosmic::surface::surface_task(cosmic::surface::action::app_popup(
+                return Task::batch([cosmic::surface::surface_task(cosmic::surface::action::app_popup(
                     |_| Default::default(),
                     |app: &mut Self| {
                         let id = window::Id::unique();
@@ -1371,7 +1463,52 @@ impl cosmic::Application for Monitor {
                         settings
                     },
                     None,
-                ));
+                )), focus]);
+            }
+            Message::ShotKey(id) => {
+                let shown = if self.window_mode { self.core.main_window_id() == Some(id) } else { self.popup == Some(id) };
+                if self.settings.screenshot_key && shown && self.shot == shot::Phase::Idle {
+                    self.shot = shot::Phase::Busy;
+                    self.capturing = true;
+                    return window::screenshot(id).map(|picture| cosmic::Action::App(Message::Captured(picture)));
+                }
+            }
+            Message::Captured(picture) => {
+                if !std::mem::take(&mut self.capturing) { return Task::none(); }
+                let (width, height) = (picture.size.width, picture.size.height);
+                return off_thread(move || shot::save_screenshot(SHOT_FOLDER, &picture.rgba, width, height), Message::ShotSaved);
+            }
+            Message::ShotSaved(result) => {
+                self.shot = match result {
+                    Ok(saved) => shot::Phase::Note { path: saved.path, shown: saved.shown, text: String::new() },
+                    Err(reason) => shot::Phase::Error(trf("The screenshot could not be saved: {0}", &[reason])),
+                };
+                if matches!(self.shot, shot::Phase::Note { .. }) {
+                    return cosmic::widget::text_input::focus(NOTE_ID.clone());
+                }
+            }
+            Message::NoteInput(value) => {
+                if let shot::Phase::Note { text, .. } = &mut self.shot {
+                    *text = value.chars().take(shot::NOTE_LIMIT).collect();
+                }
+            }
+            Message::NoteDone => return self.finish_note(true),
+            Message::Escape => {
+                if self.shot.open() { return self.finish_note(false); }
+            }
+            Message::NoteSaved(result) => match result {
+                Ok(()) => { if self.shot == shot::Phase::Noting { self.shot = shot::Phase::Idle; } }
+                Err(reason) => self.shot = shot::Phase::Error(trf("The note could not be saved: {0}", &[reason])),
+            },
+            Message::SetShotKey(on) => {
+                self.settings.screenshot_key = on;
+                self.settings.save();
+            }
+            Message::Corners(choice) => {
+                let choice = corners::normalize(&choice);
+                self.settings.corners = choice.to_string();
+                self.settings.save();
+                corners::set_current(choice);
             }
             Message::Refresh => self.send(json!({"cmd": "refresh"})),
             Message::Page(page) => return self.set_page(page),
@@ -1517,7 +1654,7 @@ impl cosmic::Application for Monitor {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        if self.window_mode { return self.popup_content(); }
+        if self.window_mode { return corners::apply(&self.settings.corners, self.popup_content()); }
         let horizontal = matches!(self.core.applet.anchor, PanelAnchor::Top | PanelAnchor::Bottom);
         let padding = self.core.applet.suggested_padding(true).0;
         let button = button::custom(self.panel_content())
@@ -1534,8 +1671,8 @@ impl cosmic::Application for Monitor {
     }
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
-        if self.window_mode { return self.popup_content(); }
-        self.core.applet.popup_container(self.popup_content()).into()
+        if self.window_mode { return corners::apply(&self.settings.corners, self.popup_content()); }
+        corners::apply(&self.settings.corners, self.core.applet.popup_container(self.popup_content()))
     }
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
@@ -1544,7 +1681,64 @@ impl cosmic::Application for Monitor {
 }
 
 impl Monitor {
+    // Done, Enter or the popup closing (keep: the note typed so far is saved), Esc (skip).
+    fn finish_note(&mut self, keep: bool) -> Task<Message> {
+        match std::mem::take(&mut self.shot) {
+            shot::Phase::Note { path, text, .. } => {
+                if keep && shot::note_text(&text).is_some() {
+                    // Busy until the note is written, so a new F12 cannot replace it.
+                    self.shot = shot::Phase::Noting;
+                    return off_thread(
+                        move || shot::save_note(&path, SHOT_FOLDER, &text).map(|_| ()).map_err(|e| e.to_string()),
+                        Message::NoteSaved,
+                    );
+                }
+            }
+            shot::Phase::Error(_) => {}
+            other => self.shot = other,
+        }
+        Task::none()
+    }
+
+    // A capture still on its way is dropped with its popup; a typed note is kept (saved).
+    fn popup_closed(&mut self) -> Task<Message> {
+        if std::mem::take(&mut self.capturing) && self.shot == shot::Phase::Busy {
+            self.shot = shot::Phase::Idle;
+        }
+        if matches!(self.shot, shot::Phase::Note { .. }) { self.finish_note(true) } else { Task::none() }
+    }
+
+    // After F12: "Screenshot saved", where, the optional note and Done (or the error and Done).
+    fn shot_overlay(&self) -> Option<Element<'_, Message>> {
+        let body: Element<Message> = match &self.shot {
+            shot::Phase::Note { shown, text: note, .. } => column![
+                text::heading(tr("Screenshot saved").to_string()),
+                dim(trf("Saved as {0}", &[shown.clone()])),
+                cosmic::widget::text_input(tr("What is wrong? (optional)").to_string(), note.as_str())
+                    .id(NOTE_ID.clone())
+                    .on_input(Message::NoteInput)
+                    .on_submit(|_| Message::NoteDone),
+                row![space::horizontal().width(Length::Fill), button::suggested(tr("Done").to_string()).on_press(Message::NoteDone)],
+            ]
+            .spacing(10)
+            .into(),
+            shot::Phase::Error(reason) => column![
+                text::body(reason.clone()),
+                row![space::horizontal().width(Length::Fill), button::suggested(tr("Done").to_string()).on_press(Message::NoteDone)],
+            ]
+            .spacing(10)
+            .into(),
+            _ => return None,
+        };
+        let card = container(body).padding(16).width(Length::Fill).class(theme::Container::Card);
+        let card = container(card).padding(12).width(if self.window_mode { Length::Fill } else { Length::Fixed(POPUP_WIDTH) });
+        Some(card.into())
+    }
+
     fn popup_content(&self) -> Element<'_, Message> {
+        if let Some(overlay) = self.shot_overlay() {
+            return overlay;
+        }
         let body = match self.page {
             Page::Main => self.main_page(),
             Page::Settings => self.settings_page(),

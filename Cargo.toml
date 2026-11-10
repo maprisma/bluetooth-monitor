@@ -1,6 +1,6 @@
 [package]
 name = "maprisma-bluetooth-monitor"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 description = "COSMIC panel applet: batteries and connections of wireless mice, keyboards, earphones and controllers"
@@ -12,6 +12,9 @@ path = "src/tray/main.rs"
 [dependencies]
 zbus = "5"
 serde_json = "1"
+# Already in the dependency tree (libcosmic): F12 screenshots (PNG, openat/fstat).
+png = "0.18"
+libc = "0.2"
 tokio = { version = "1", features = ["process", "io-util", "time", "macros", "rt", "sync"] }
 
 [dependencies.libcosmic]

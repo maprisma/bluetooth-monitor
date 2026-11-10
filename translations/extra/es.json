@@ -22,5 +22,17 @@
   "no DPI range": "sin intervalo de DPI",
   "DPI out of range": "DPI fuera de rango",
   "no answer": "sin respuesta",
-  "HID++ error {0}": "Error HID++ {0}"
+  "HID++ error {0}": "Error HID++ {0}",
+  "F12 saves a screenshot": "F12 guarda una captura de pantalla",
+  "Screenshot saved": "Captura guardada",
+  "Saved as {0}": "Guardada como {0}",
+  "What is wrong? (optional)": "¿Qué falla? (opcional)",
+  "Done": "Hecho",
+  "The screenshot could not be saved: {0}": "No se pudo guardar la captura: {0}",
+  "The note could not be saved: {0}": "No se pudo guardar la nota: {0}",
+  "Corners": "Esquinas",
+  "Like the desktop ({0} px)": "Como el escritorio ({0} px)",
+  "Slightly rounded ({0} px)": "Ligeramente redondeadas ({0} px)",
+  "Rounded ({0} px)": "Redondeadas ({0} px)",
+  "Square": "Rectas"
 }

@@ -22,5 +22,17 @@
   "no DPI range": "kein DPI-Bereich",
   "DPI out of range": "DPI außerhalb des Bereichs",
   "no answer": "keine Antwort",
-  "HID++ error {0}": "HID++-Fehler {0}"
+  "HID++ error {0}": "HID++-Fehler {0}",
+  "F12 saves a screenshot": "F12 speichert ein Bildschirmfoto",
+  "Screenshot saved": "Bildschirmfoto gespeichert",
+  "Saved as {0}": "Gespeichert als {0}",
+  "What is wrong? (optional)": "Was stimmt nicht? (optional)",
+  "Done": "Fertig",
+  "The screenshot could not be saved: {0}": "Das Bildschirmfoto konnte nicht gespeichert werden: {0}",
+  "The note could not be saved: {0}": "Die Notiz konnte nicht gespeichert werden: {0}",
+  "Corners": "Ecken",
+  "Like the desktop ({0} px)": "Wie der Desktop ({0} px)",
+  "Slightly rounded ({0} px)": "Leicht abgerundet ({0} px)",
+  "Rounded ({0} px)": "Abgerundet ({0} px)",
+  "Square": "Eckig"
 }
