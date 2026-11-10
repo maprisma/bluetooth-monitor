@@ -1,3 +1,6 @@
+#[path = "../i18n.rs"]
+mod i18n;
+use i18n::tr;
 mod model;
 #[path = "../shared.rs"]
 mod shared;
@@ -190,7 +193,7 @@ impl Tray {
     }
     #[zbus(property)]
     fn title(&self) -> &str {
-        APP_NAME
+        tr("Maprisma Bluetooth Monitor")
     }
     #[zbus(property)]
     async fn status(&self) -> &str {
@@ -233,7 +236,7 @@ impl Tray {
         (
             ICON.into(),
             vec![],
-            APP_NAME.into(),
+            tr("Maprisma Bluetooth Monitor").into(),
             self.state.lock().await.tooltip(),
         )
     }
@@ -286,7 +289,7 @@ async fn open_window(connection: &Connection, toggle: bool) {
         });
     }
 }
-async fn snapshots(tx: mpsc::UnboundedSender<String>) {
+async fn snapshots(tx: mpsc::UnboundedSender<serde_json::Value>) {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     loop {
         if let Some(script) = script_path("bluetooth-monitor.py") {
@@ -306,7 +309,7 @@ async fn snapshots(tx: mpsc::UnboundedSender<String>) {
                 while let Ok(Some(line)) = lines.next_line().await {
                     if let Ok(snapshot) = serde_json::from_str(&line) {
                         if tx
-                            .send(model::tooltip(&snapshot, &model::settings()))
+                            .send(snapshot)
                             .is_err()
                         {
                             return;
@@ -322,8 +325,9 @@ async fn snapshots(tx: mpsc::UnboundedSender<String>) {
 }
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    i18n::set_language(model::settings()["language"].as_str().unwrap_or("auto"));
     let state = Arc::new(Mutex::new(State {
-        tooltip: "Waiting for device data".into(),
+        tooltip: tr("Looking for devices …").into(),
         menu: model::menu(),
         revision: 1,
     }));
@@ -398,9 +402,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
     let helper = tokio::spawn(snapshots(status_tx));
+    let mut latest = serde_json::Value::Null;
+    let mut language_tick = tokio::time::interval(Duration::from_secs(1));
+    let mut language = model::settings()["language"].as_str().unwrap_or("auto").to_string();
     loop {
         tokio::select! {
-            Some(text) = status_rx.recv() => {
+            _ = language_tick.tick() => {
+                let current = model::settings()["language"].as_str().unwrap_or("auto").to_string();
+                if current != language {
+                    language = current; i18n::set_language(&language);
+                    let mut s = state.lock().await; s.menu = model::menu(); s.tooltip = model::tooltip(&latest, &model::settings()); s.revision += 1;
+                    let revision = s.revision; drop(s);
+                    Menu::layout_updated(&SignalEmitter::new(&connection, "/MenuBar")?, revision, 0).await?;
+                    Tray::new_tool_tip(&SignalEmitter::new(&connection, "/StatusNotifierItem")?).await?;
+                }
+            }
+            Some(snapshot) = status_rx.recv() => {
+                latest = snapshot;
+                let text = model::tooltip(&latest, &model::settings());
                 let mut s = state.lock().await;
                 if s.tooltip != text {
                     s.tooltip = text;
@@ -409,6 +428,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             Some(action) = rx.recv() => match action {
+                Action::Language(index) => {
+                    let code = i18n::language_choices()[index].0.clone();
+                    model::save_language(&code);
+                    i18n::set_language(&code);
+                    let mut s = state.lock().await;
+                    s.menu = model::menu(); s.tooltip = model::tooltip(&latest, &model::settings()); s.revision += 1;
+                    let revision = s.revision; drop(s);
+                    Menu::layout_updated(&SignalEmitter::new(&connection, "/MenuBar")?, revision, 0).await?;
+                    Tray::new_tool_tip(&SignalEmitter::new(&connection, "/StatusNotifierItem")?).await?;
+                }
                 Action::Quit => { helper.abort(); let _ = helper.await; return Ok(()); }
                 Action::Open => open_window(&connection, false).await,
                 Action::Activate => open_window(&connection, true).await,
@@ -425,7 +454,7 @@ mod tests {
         let menu = model::menu();
         assert_eq!(Variant::new(layout(&menu, -1, &[])).value_signature().to_string(), "(ia{sv}av)");
         assert!(layout(&menu, 0, &[]).2.is_empty());
-        assert_eq!(layout(&menu, 1, &[]).2.len(), 2);
+        assert_eq!(layout(&menu, 1, &[]).2.len(), 3);
         assert_eq!(properties(menu.find(1).unwrap(), &["label".into()]).len(), 1);
     }
     #[tokio::test]
@@ -440,5 +469,7 @@ mod tests {
         assert_eq!(rx.try_recv().unwrap(), Action::Open);
         menu.dispatch(2, "clicked").await;
         assert_eq!(rx.try_recv().unwrap(), Action::Quit);
+        menu.dispatch(10, "clicked").await;
+        assert_eq!(rx.try_recv().unwrap(), Action::Language(0));
     }
 }

@@ -18,7 +18,15 @@ Omarchy widget, which stays as it is, with the same Python helper.
 - **Settings:** low and critical battery levels, whether other Bluetooth devices are listed, receiver
   access ("Allow access" installs the uaccess udev rule through `pkexec`).
 
-English only. COSMIC's own Bluetooth applet stays the Bluetooth switch; this one is the battery monitor.
+The interface supports English, Deutsch, Français, Español, Italiano, Português, Nederlands and Polski.
+Pick **Language** on the Settings page (applet popup or window) or in the KDE tray menu.
+**System (<name>)** follows the first non-empty `LC_ALL`, `LC_MESSAGES`, or `LANG`; unsupported locales use English.
+The `language` setting (`auto` or a language code) is stored in the app’s `settings.json`.
+Changes apply immediately; other running instances follow within one second.
+Catalogs in `translations/` and `translations/extra/` are compiled into both binaries.
+To refresh the original catalogs, run `python3 tools/import-translations /path/to/omarchy-bluetooth-monitor/I18n.js`;
+the source is only read. Extra port strings are maintained separately.
+ COSMIC's own Bluetooth applet stays the Bluetooth switch; this one is the battery monitor.
 
 ## Install
 
@@ -38,8 +46,8 @@ absolute Exec path, the icon). Then add **Bluetooth Monitor** in COSMIC Settings
 - The Bluetooth page reads BlueZ's objects with `busctl --system --json=short … GetManagedObjects` (read
   only) every two seconds while it is open. Changes go through `scripts/bt-device.sh`, `scripts/bt-power.sh`
   and `scripts/audio-default.py` with a fixed argv and a checked address.
-- Settings (levels, other devices, hidden devices) are in `~/.config/maprisma-bluetooth-monitor/settings.json`;
-  the helper keeps the Logitech settings you changed in `~/.config/bluetooth-monitor/settings.json`.
+- Settings (language, levels, other devices, hidden devices) are in `~/.config/maprisma-bluetooth-monitor/settings.json`;
+  the helper keeps the Logitech settings you changed in `~/.config/omarchy/bluetooth-monitor/settings.json`.
 
 ## Development
 

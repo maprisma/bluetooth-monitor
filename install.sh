@@ -43,6 +43,21 @@ cat > "$data/applications/$id.Window.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Maprisma Bluetooth Monitor
+Name[de]=Maprisma Bluetooth-Monitor
+Name[fr]=Moniteur Bluetooth Maprisma
+Name[es]=Monitor Bluetooth Maprisma
+Name[it]=Monitor Bluetooth Maprisma
+Name[pt]=Monitor Bluetooth Maprisma
+Name[nl]=Maprisma Bluetooth-monitor
+Name[pl]=Monitor Bluetooth Maprisma
+Comment=Batteries and connections of wireless mice, keyboards, earphones and controllers
+Comment[de]=Akkustände und Verbindungen von kabellosen Mäusen, Tastaturen, Kopfhörern und Controllern
+Comment[fr]=Batteries et connexions des souris, claviers, écouteurs et manettes sans fil
+Comment[es]=Baterías y conexiones de ratones, teclados, auriculares y mandos inalámbricos
+Comment[it]=Batterie e connessioni di mouse, tastiere, auricolari e controller wireless
+Comment[pt]=Baterias e ligações de ratos, teclados, auriculares e comandos sem fios
+Comment[nl]=Batterijen en verbindingen van draadloze muizen, toetsenborden, oordopjes en controllers
+Comment[pl]=Baterie i połączenia bezprzewodowych myszy, klawiatur, słuchawek i kontrolerów
 Exec=$app_exec --window
 Icon=$id-symbolic
 Terminal=false
@@ -55,6 +70,21 @@ cat > "$autostart/$id.Tray.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Maprisma Bluetooth Monitor
+Name[de]=Maprisma Bluetooth-Monitor
+Name[fr]=Moniteur Bluetooth Maprisma
+Name[es]=Monitor Bluetooth Maprisma
+Name[it]=Monitor Bluetooth Maprisma
+Name[pt]=Monitor Bluetooth Maprisma
+Name[nl]=Maprisma Bluetooth-monitor
+Name[pl]=Monitor Bluetooth Maprisma
+Comment=Batteries and connections of wireless mice, keyboards, earphones and controllers
+Comment[de]=Akkustände und Verbindungen von kabellosen Mäusen, Tastaturen, Kopfhörern und Controllern
+Comment[fr]=Batteries et connexions des souris, claviers, écouteurs et manettes sans fil
+Comment[es]=Baterías y conexiones de ratones, teclados, auriculares y mandos inalámbricos
+Comment[it]=Batterie e connessioni di mouse, tastiere, auricolari e controller wireless
+Comment[pt]=Baterias e ligações de ratos, teclados, auriculares e comandos sem fios
+Comment[nl]=Batterijen en verbindingen van draadloze muizen, toetsenborden, oordopjes en controllers
+Comment[pl]=Baterie i połączenia bezprzewodowych myszy, klawiatur, słuchawek i kontrolerów
 Exec=$tray_exec
 Icon=$id-symbolic
 Terminal=false

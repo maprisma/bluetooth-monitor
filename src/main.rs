@@ -1,3 +1,5 @@
+mod i18n;
+use i18n::{tr, trf};
 mod shared;
 mod window_control;
 use shared::script_path;
@@ -113,18 +115,13 @@ fn clean(name: &str) -> String {
     name.chars().filter(|c| !c.is_control()).take(80).collect::<String>().trim().to_string()
 }
 
-const CONNECTIONS: &[(&str, &str)] = &[
-    ("unifying", "Unifying dongle"),
-    ("bolt", "Bolt dongle"),
-    ("nano", "Nano dongle"),
-    ("lightspeed", "Lightspeed dongle"),
-    ("bluetooth", "Bluetooth"),
-    ("usb", "USB cable"),
-    ("wireless", "Wireless"),
-];
-
 fn connection_name(code: &str) -> &'static str {
-    CONNECTIONS.iter().find(|(c, _)| *c == code).map_or("", |(_, n)| n)
+    match code {
+        "unifying" => tr("Unifying dongle"), "bolt" => tr("Bolt dongle"),
+        "nano" => tr("Nano dongle"), "lightspeed" => tr("Lightspeed dongle"),
+        "bluetooth" => tr("Bluetooth"), "usb" => tr("USB cable"),
+        "wireless" => tr("Wireless"), _ => "",
+    }
 }
 
 fn kind_icon(kind: &str) -> &'static str {
@@ -182,16 +179,34 @@ fn battery_icon(b: &Value) -> String {
     }
 }
 
+// Translate helper messages here; the shared Python helpers remain byte-for-byte unchanged.
+fn helper_error(message: &str) -> String {
+    match message {
+        "not a number" => tr("not a number").into(),
+        "not on/off" => tr("not on/off").into(),
+        "no DPI setting" => tr("no DPI setting").into(),
+        "no DPI range" => tr("no DPI range").into(),
+        "DPI out of range" => tr("DPI out of range").into(),
+        "no answer" => tr("no answer").into(),
+        _ => if let Some(code) = message.strip_prefix("HID++ error ") {
+            trf("HID++ error {0}", &[code.into()])
+        } else { message.to_string() },
+    }
+}
+
 fn battery_text(b: &Value) -> String {
     match b.get("percent").and_then(Value::as_i64) {
         Some(p) => format!("{p}%"),
-        None => s(b, "level").to_string(),
+        None => match s(b, "level") {
+            "critical" => tr("critical"), "low" => tr("low"), "empty" => tr("empty"),
+            "good" => tr("good"), "full" => tr("full"), _ => tr("unknown"),
+        }.to_string(),
     }
 }
 
 fn device_name(d: &Value) -> String {
     let name = clean(s(d, "name"));
-    if name.is_empty() { "Logitech device".into() } else { name }
+    if name.is_empty() { tr("Logitech device").into() } else { name }
 }
 
 fn device_key(d: &Value) -> String {
@@ -212,6 +227,7 @@ fn has_settings(d: &Value) -> bool {
 // The GNOME port's GSettings keys, as one JSON file.
 #[derive(Debug, Clone)]
 struct Settings {
+    language: String,
     low_at: i64,
     critical_at: i64,
     other_devices: bool,
@@ -220,7 +236,7 @@ struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { low_at: 25, critical_at: 10, other_devices: true, hidden: BTreeSet::new() }
+        Self { language: "auto".into(), low_at: 25, critical_at: 10, other_devices: true, hidden: BTreeSet::new() }
     }
 }
 
@@ -245,6 +261,7 @@ impl Settings {
         if let Some(b) = v.get("other_devices").and_then(Value::as_bool) {
             out.other_devices = b;
         }
+        out.language = v["language"].as_str().filter(|c| *c == "auto" || i18n::supported(c)).unwrap_or("auto").to_string();
         out.hidden = list(&v, "hidden").iter().filter_map(Value::as_str).take(500).map(str::to_string).collect();
         out
     }
@@ -257,6 +274,7 @@ impl Settings {
             return;
         }
         let data = json!({
+            "language": self.language,
             "low_at": self.low_at,
             "critical_at": self.critical_at,
             "other_devices": self.other_devices,
@@ -485,6 +503,7 @@ struct Monitor {
 
 #[derive(Debug, Clone)]
 enum Message {
+    LanguageTick,
     WindowTick,
     Snapshot(Value),
     HelperStarted(UnboundedSender<String>),
@@ -499,6 +518,7 @@ enum Message {
     Set(String, &'static str, Value),
     Drag(String, &'static str, f64),
     Release(String, &'static str),
+    Language(String),
     LowAt(i64),
     CriticalAt(i64),
     OtherDevices(bool),
@@ -642,26 +662,26 @@ impl Monitor {
         let phase = s(&self.stats, "phase");
         let meta = match phase {
             "ok" => {
-                let mut m = format!("{online} of {} devices connected", shown.len());
+                let mut m = trf("{0} of {1} devices connected", &[online.to_string(), shown.len().to_string()]);
                 if receivers > 0 {
-                    m += &if receivers == 1 { " · 1 dongle".to_string() } else { format!(" · {receivers} dongles") };
+                    m += &if receivers == 1 { format!(" · {}", tr("1 dongle")) } else { format!(" · {}", trf("{0} dongles", &[receivers.to_string()])) };
                 }
                 m
             }
-            "permission" => "Access needed".into(),
-            "none" => "Nothing found".into(),
-            _ => "Looking for devices …".into(),
+            "permission" => tr("Access needed").into(),
+            "none" => tr("Nothing found").into(),
+            _ => tr("Looking for devices …").into(),
         };
         let mut head = row![
             tinted(APP_ICON, 32, None, if online > 0 { 1.0 } else { DIM }),
-            column![text::title4("Maprisma Bluetooth Monitor"), dim(meta)].spacing(2),
+            column![text::title4(tr("Maprisma Bluetooth Monitor")), dim(meta)].spacing(2),
             space::horizontal().width(Length::Fill),
         ]
         .spacing(12)
         .align_y(Alignment::Center);
         if self.page == Page::Main {
             if let Some(p) = self.lowest(&shown) {
-                head = head.push(container(text::caption(format!("Lowest battery {p}%"))).padding([2, 10]).class(pill_style()));
+                head = head.push(container(text::caption(trf("Lowest battery {0}%", &[p.to_string()]))).padding([2, 10]).class(pill_style()));
             }
             let hidden = self.devices().len() - shown.len();
             if hidden > 0 || self.show_hidden {
@@ -678,7 +698,7 @@ impl Monitor {
 
     fn page_header<'a>(&self, title: &str, trailing: Option<Element<'a, Message>>) -> Element<'a, Message> {
         let mut line = row![
-            button::text("Back").leading_icon(icon::from_name("go-previous-symbolic").size(16)).on_press(Message::Page(Page::Main)),
+            button::text(tr("Back")).leading_icon(icon::from_name("go-previous-symbolic").size(16)).on_press(Message::Page(Page::Main)),
             text::heading(title.to_uppercase()),
             space::horizontal().width(Length::Fill),
         ]
@@ -697,13 +717,13 @@ impl Monitor {
             content = content.push(self.setup_card());
         }
         let message = match phase {
-            "none" => Some("No Logitech receiver and no battery-powered Bluetooth device found.".to_string()),
-            "error" => Some(format!("Error: {}", s(&self.stats, "error"))),
+            "none" => Some(tr("No Logitech receiver and no battery-powered Bluetooth device found.").to_string()),
+            "error" => Some(trf("Error: {0}", &[helper_error(s(&self.stats, "error"))])),
             _ => match s(&self.stats, "message_code") {
-                "errNotConnected" => Some("That device is not connected right now.".into()),
+                "errNotConnected" => Some(tr("That device is not connected right now.").into()),
                 "errChange" => {
                     let why = list(&self.stats, "message_args").first().and_then(Value::as_str).unwrap_or("");
-                    Some(format!("Could not change the setting ({why})."))
+                    Some(trf("Could not change the setting ({0}).", &[helper_error(why)]))
                 }
                 _ => None,
             },
@@ -718,13 +738,13 @@ impl Monitor {
         let devices: Vec<&Value> = if self.show_hidden { self.devices().iter().collect() } else { self.shown() };
         let links = self.links(&devices);
         if !links.is_empty() {
-            content = content.push(section("Connections"));
+            content = content.push(section(tr("Connections")));
             content = content.push(self.tree(links));
-            content = content.push(dim("Dotted line: radio link. Solid line: plugged in or built in."));
+            content = content.push(dim(tr("Dotted line: radio link. Solid line: plugged in or built in.")));
             content = content.push(divider::horizontal::default());
         }
         if !devices.is_empty() {
-            content = content.push(section("Devices"));
+            content = content.push(section(tr("Devices")));
             for d in devices {
                 content = content.push(self.card(d));
             }
@@ -733,16 +753,14 @@ impl Monitor {
     }
 
     fn setup_card(&self) -> Element<'_, Message> {
-        let allow = button::suggested(if self.allowing { "Waiting for password …" } else { "Allow access" })
+        let allow = button::suggested(if self.allowing { tr("Waiting for password …") } else { tr("Allow access") })
             .leading_icon(icon::from_name("dialog-password-symbolic").size(16))
             .on_press_maybe((!self.allowing).then_some(Message::AllowAccess));
         container(
             column![
-                text::heading("Not ready yet · step 1 of 1"),
+                text::heading(tr("Not ready yet · step 1 of 1")),
                 text::caption(
-                    "Linux only lets root talk to the receivers. Allowing access installs one udev rule \
-                     (the same one Solaar uses) that gives the logged-in user access to Logitech receivers \
-                     and devices. You will be asked for your password once."
+                    tr("Linux only lets root talk to the receivers. Allowing access installs one udev rule (the same one Solaar uses) that gives the logged-in user access to Logitech receivers and devices. You will be asked for your password once.")
                 ),
                 allow,
             ]
@@ -774,13 +792,13 @@ impl Monitor {
             }
             let paired = all.iter().filter(|d| s(d, "receiver") == s(r, "id")).count();
             let mut label = match connection_name(family) {
-                "" => "Dongle".to_string(),
+                "" => tr("Dongle").to_string(),
                 name => name.to_string(),
             };
             if per_family[family] > 1 {
                 label += &format!(" {n}");
             }
-            out.push((label, format!("{paired} of {} slots", int(r, "max_devices").unwrap_or(0)), "media-removable-symbolic", mine));
+            out.push((label, trf("{0} of {1} slots", &[paired.to_string(), int(r, "max_devices").unwrap_or(0).to_string()]), "media-removable-symbolic", mine));
         }
         let adapters = list(&self.stats, "adapters");
         let bt: Vec<&Value> = devices
@@ -799,13 +817,13 @@ impl Monitor {
             }
             let builtin = flag(ad, "builtin");
             let label = if builtin {
-                "Built-in Bluetooth".to_string()
+                tr("Built-in Bluetooth").to_string()
             } else if adapters.len() > 1 {
-                format!("Bluetooth dongle {}", i + 1)
+                format!("{} {}", tr("Bluetooth dongle"), i + 1)
             } else {
-                "Bluetooth dongle".to_string()
+                tr("Bluetooth dongle").to_string()
             };
-            let mut sub = if builtin { "Inside this PC".to_string() } else { "USB stick".to_string() };
+            let mut sub = if builtin { tr("Inside this PC").to_string() } else { tr("USB stick").to_string() };
             if !s(ad, "vendor").is_empty() {
                 sub += &format!(" · {}", s(ad, "vendor"));
             }
@@ -813,10 +831,10 @@ impl Monitor {
         }
         let mut groups = Vec::new();
         if adapters.is_empty() {
-            groups.push(("bluetooth", "Bluetooth adapter", "bluetooth-active-symbolic"));
+            groups.push(("bluetooth", tr("Bluetooth adapter"), "bluetooth-active-symbolic"));
         }
-        groups.push(("usb", "USB cable", "media-removable-symbolic"));
-        groups.push(("wireless", "Wireless", "network-wireless-symbolic"));
+        groups.push(("usb", tr("USB cable"), "media-removable-symbolic"));
+        groups.push(("wireless", tr("Wireless"), "network-wireless-symbolic"));
         for (code, name, icon_name) in groups {
             let mine: Vec<&Value> = devices
                 .iter()
@@ -834,7 +852,7 @@ impl Monitor {
     fn tree<'a>(&'a self, links: Vec<(String, String, &'static str, Vec<&'a Value>)>) -> Element<'a, Message> {
         let host = std::fs::read_to_string("/etc/hostname").unwrap_or_default();
         let mut tree = column![
-            row![tinted("computer-symbolic", 20, None, 1.0), text::heading(format!("This PC  ·  {}", clean(host.trim())))]
+            row![tinted("computer-symbolic", 20, None, 1.0), text::heading(format!("{}  ·  {}", tr("This PC"), clean(host.trim())))]
                 .spacing(8)
                 .align_y(Alignment::Center)
         ]
@@ -878,7 +896,7 @@ impl Monitor {
         let name = device_name(d);
         chip = chip.push(if online { text::caption(name).into() } else { dim(name) });
         if !online {
-            chip = chip.push(dim("off"));
+            chip = chip.push(dim(tr("off")));
         } else if let Some(b) = battery(d) {
             let color = self.battery_color(Some(b));
             chip = chip.push(tinted(&battery_icon(b), 16, color, 1.0));
@@ -893,15 +911,15 @@ impl Monitor {
     fn status_line(d: &Value) -> String {
         let mut place = connection_name(s(d, "connection")).to_string();
         if let Some(slot) = int(d, "slot") {
-            place += &format!(" · slot {slot}");
+            place += &format!(" · {}", trf("slot {0}", &[slot.to_string()]));
         }
         if !flag(d, "online") {
-            return format!("{place} · not connected");
+            return format!("{place} · {}", tr("not connected"));
         }
         match battery(d) {
-            Some(b) if flag(b, "charging") => format!("{place} · charging"),
-            Some(b) if s(b, "status") == "full" && flag(b, "external_power") => format!("{place} · charged"),
-            None => format!("{place} · no battery reading"),
+            Some(b) if flag(b, "charging") => format!("{place} · {}", tr("charging")),
+            Some(b) if s(b, "status") == "full" && flag(b, "external_power") => format!("{place} · {}", tr("charged")),
+            None => format!("{place} · {}", tr("no battery reading")),
             _ => place,
         }
     }
@@ -917,7 +935,7 @@ impl Monitor {
         let opacity = if online { 1.0 } else { DIM };
         let mut status = Self::status_line(d);
         if hidden {
-            status += " · hidden";
+            status += &format!(" · {}", tr("hidden"));
         }
         let name = device_name(d);
         let mut main = row![
@@ -990,26 +1008,26 @@ impl Monitor {
                 value,
                 |v| {
                     let v = snap_dpi(dpi, v);
-                    if Some(v) == default { format!("{v} · default") } else { v.to_string() }
+                    if Some(v) == default { format!("{v} · {}", tr("default")) } else { v.to_string() }
                 },
             );
-            let mut head = row![text::body("Pointer speed (DPI)"), space::horizontal().width(Length::Fill), text::body(shown)]
+            let mut head = row![text::body(tr("Pointer speed (DPI)")), space::horizontal().width(Length::Fill), text::body(shown)]
                 .spacing(8)
                 .align_y(Alignment::Center);
             if let Some(def) = default.filter(|def| *def != value as i64) {
-                head = head.push(button::text("Default").on_press(Message::Set(id.clone(), "dpi", json!(def))));
+                head = head.push(button::text(tr("Default")).on_press(Message::Set(id.clone(), "dpi", json!(def))));
             }
             col = col.push(column![head, s_el].spacing(4));
         }
         if let Some(ss) = d.get("smartshift").filter(|v| v.is_object()) {
             let mode = ss.get("mode").cloned().unwrap_or(Value::Null);
             let idc = id.clone();
-            col = col.push(text::body("Scroll wheel mode"));
+            col = col.push(text::body(tr("Scroll wheel mode")));
             col = col.push(choices(
                 vec![
-                    (json!("smartshift"), "SmartShift".into()),
-                    (json!("ratchet"), "Ratchet".into()),
-                    (json!("freespin"), "Free spin".into()),
+                    (json!("smartshift"), tr("SmartShift").into()),
+                    (json!("ratchet"), tr("Ratchet").into()),
+                    (json!("freespin"), tr("Free spin").into()),
                 ],
                 &mode,
                 move |v| Message::Set(idc.clone(), "smartshift", v),
@@ -1024,20 +1042,20 @@ impl Monitor {
                     int(ss, "threshold").filter(|t| *t > 0).unwrap_or(10) as f64,
                     |v| (v.round() as i64).to_string(),
                 );
-                col = col.push(row![text::body("Sensitivity"), s_el, text::body(shown)].spacing(8).align_y(Alignment::Center));
-                col = col.push(dim("Lower values switch to free spin with a gentler flick."));
+                col = col.push(row![text::body(tr("Sensitivity")), s_el, text::body(shown)].spacing(8).align_y(Alignment::Center));
+                col = col.push(dim(tr("Lower values switch to free spin with a gentler flick.")));
             }
         }
         if let Some(wheel) = d.get("wheel").filter(|v| v.is_object()) {
             let (a, b) = (id.clone(), id.clone());
             col = col.push(setting_row(
-                "Natural scrolling",
-                "Content follows the wheel, like on a touchpad",
+                tr("Natural scrolling"),
+                tr("Content follows the wheel, like on a touchpad"),
                 toggler(flag(wheel, "invert")).on_toggle(move |on| Message::Set(a.clone(), "invert", json!(on))).into(),
             ));
             col = col.push(setting_row(
-                "High-resolution scrolling",
-                "Smoother, finer steps in apps that support it",
+                tr("High-resolution scrolling"),
+                tr("Smoother, finer steps in apps that support it"),
                 toggler(flag(wheel, "hires")).on_toggle(move |on| Message::Set(b.clone(), "hires", json!(on))).into(),
             ));
         }
@@ -1045,11 +1063,11 @@ impl Monitor {
             let on = flag(fn_swap, "on");
             let a = id.clone();
             col = col.push(setting_row(
-                "Swap Fn keys",
+                tr("Swap Fn keys"),
                 if on {
-                    "On: top row gives media and special functions, hold Fn for F1–F12"
+                    tr("On: top row gives media and special functions, hold Fn for F1–F12")
                 } else {
-                    "Off: top row gives F1–F12, hold Fn for media and special functions"
+                    tr("Off: top row gives F1–F12, hold Fn for media and special functions")
                 },
                 toggler(on).on_toggle(move |v| Message::Set(a.clone(), "fnswap", json!(v))).into(),
             ));
@@ -1062,7 +1080,7 @@ impl Monitor {
         let pct = |v: i64| (json!(v), format!("{v}%"));
         let missing = !list(&self.stats, "denied").is_empty();
         let access: Element<Message> = if missing {
-            button::suggested(if self.allowing { "Waiting for password …" } else { "Allow access" })
+            button::suggested(if self.allowing { tr("Waiting for password …") } else { tr("Allow access") })
                 .leading_icon(icon::from_name("dialog-password-symbolic").size(16))
                 .on_press_maybe((!self.allowing).then_some(Message::AllowAccess))
                 .into()
@@ -1070,30 +1088,36 @@ impl Monitor {
             space::horizontal().width(Length::Shrink).into()
         };
         column![
-            self.page_header("Settings", None),
+            self.page_header(tr("Settings"), None),
+            text::body(tr("Language")),
+            column(i18n::language_choices().into_iter().map(|(code, label)| {
+                let chosen = code == st.language;
+                let b = if chosen { button::suggested(label) } else { button::standard(label) };
+                b.on_press_maybe((!chosen).then_some(Message::Language(code))).into()
+            })).spacing(4),
             divider::horizontal::default(),
             column![
-                text::body("Low battery warning"),
-                dim("At this level or less the icon turns orange"),
+                text::body(tr("Low battery warning")),
+                dim(tr("At this level or less the icon turns orange")),
                 choices([15, 20, 25, 30, 40, 50].into_iter().map(pct).collect(), &json!(st.low_at), |v| {
                     Message::LowAt(v.as_i64().unwrap_or(25))
                 }),
             ]
             .spacing(4),
             column![
-                text::body("Critical battery warning"),
-                dim("At this level or less the icon turns red"),
+                text::body(tr("Critical battery warning")),
+                dim(tr("At this level or less the icon turns red")),
                 choices([5, 10, 15, 20].into_iter().map(pct).collect(), &json!(st.critical_at), |v| {
                     Message::CriticalAt(v.as_i64().unwrap_or(10))
                 }),
             ]
             .spacing(4),
             setting_row(
-                "Other Bluetooth devices",
-                "Trackpads, earphones, controllers and more (battery only)",
+                tr("Other Bluetooth devices"),
+                tr("Trackpads, earphones, controllers and more (battery only)"),
                 toggler(st.other_devices).on_toggle(Message::OtherDevices).into(),
             ),
-            setting_row("Receiver access", if missing { "Not granted" } else { "Granted" }, access),
+            setting_row(tr("Receiver access"), if missing { tr("Not granted") } else { tr("Granted") }, access),
         ]
         .spacing(12)
         .into()
@@ -1104,13 +1128,13 @@ impl Monitor {
         let scanning = self.scanning();
         let trailing: Option<Element<Message>> = bt.has_adapter.then(|| {
             let state = if scanning {
-                text::caption("Scanning").class(theme::Text::Custom(accent_text)).into()
+                text::caption(tr("Scanning")).class(theme::Text::Custom(accent_text)).into()
             } else {
-                dim(if bt.powered { "On" } else { "Off" })
+                dim(if bt.powered { tr("On") } else { tr("Off") })
             };
             row![state, toggler(bt.powered).on_toggle(Message::BtPower)].spacing(8).align_y(Alignment::Center).into()
         });
-        let mut content = column![self.page_header("Bluetooth", trailing), divider::horizontal::default()].spacing(8);
+        let mut content = column![self.page_header(tr("Bluetooth"), trailing), divider::horizontal::default()].spacing(8);
         let sections = bt.sections(scanning);
         let mut any = false;
         let mut available = 0;
@@ -1125,18 +1149,18 @@ impl Monitor {
                 content = content.push(divider::horizontal::light());
             }
             any = true;
-            content = content.push(section(title));
+            content = content.push(section(match title { "Connected" => tr("Connected"), "Paired" => tr("Paired"), _ => tr("Available") }));
             for r in rows {
                 content = content.push(self.bt_row(r, title == "Available"));
             }
         }
         if !any || (scanning && available == 0) {
             content = content.push(dim(if !bt.has_adapter {
-                "No Bluetooth adapter"
+                tr("No Bluetooth adapter")
             } else if !bt.powered {
-                "Turn Bluetooth on to scan"
+                tr("Turn Bluetooth on to scan")
             } else {
-                "Scanning for devices…"
+                tr("Scanning for devices…")
             }));
         }
         content.into()
@@ -1147,9 +1171,9 @@ impl Monitor {
         let asking = self.confirm_forget == r.address;
         let mut words = column![text::heading(r.name.clone())].spacing(2);
         let status = match pending {
-            Some("forgetting") => "Forgetting…".to_string(),
-            Some("disconnecting") => "Disconnecting…".to_string(),
-            Some(_) => "Connecting…".to_string(),
+            Some("forgetting") => tr("Forgetting…").to_string(),
+            Some("disconnecting") => tr("Disconnecting…").to_string(),
+            Some(_) => tr("Connecting…").to_string(),
             None => match r.battery {
                 Some(p) if r.connected => format!("{p} %"),
                 _ => String::new(),
@@ -1171,7 +1195,7 @@ impl Monitor {
         let idle = pending.is_none();
         if !available {
             let forget = if asking {
-                button::destructive("Really forget?")
+                button::destructive(tr("Really forget?"))
                     .leading_icon(icon::from_name("user-trash-symbolic").size(16))
                     .on_press_maybe(idle.then(|| Message::Forget(r.address.clone())))
                     .into()
@@ -1181,12 +1205,12 @@ impl Monitor {
             line = line.push(forget);
         }
         let main = if r.connected {
-            button::standard("Disconnect")
+            button::standard(tr("Disconnect"))
                 .leading_icon(icon::from_name("bluetooth-disabled-symbolic").size(16))
                 .on_press_maybe(idle.then(|| Message::BtAction("disconnect", r.address.clone())))
         } else {
             let action = if available { "pair" } else { "connect" };
-            button::standard(if available { "Pair" } else { "Connect" })
+            button::standard(if available { tr("Pair") } else { tr("Connect") })
                 .leading_icon(icon::from_name("bluetooth-active-symbolic").size(16))
                 .on_press_maybe(idle.then(|| Message::BtAction(action, r.address.clone())))
         };
@@ -1195,8 +1219,8 @@ impl Monitor {
 
     fn footer(&self) -> Element<'_, Message> {
         row![
-            button::standard("Refresh").leading_icon(icon::from_name("view-refresh-symbolic").size(16)).on_press(Message::Refresh),
-            button::standard("Bluetooth")
+            button::standard(tr("Refresh")).leading_icon(icon::from_name("view-refresh-symbolic").size(16)).on_press(Message::Refresh),
+            button::standard(tr("Bluetooth"))
                 .leading_icon(icon::from_name("bluetooth-active-symbolic").size(16))
                 .on_press(Message::Page(Page::Bluetooth)),
         ]
@@ -1236,10 +1260,11 @@ impl cosmic::Application for Monitor {
 
     fn init(core: Core, window_mode: bool) -> (Self, Task<Message>) {
         let mut app = Self { core, window_mode, settings: Settings::load(), ..Default::default() };
+        i18n::set_language(&app.settings.language);
         let task = if window_mode {
             use cosmic::ApplicationExt;
-            app.set_header_title(shared::APP_NAME.into());
-            app.set_window_title(shared::APP_NAME.into(), app.core.main_window_id().unwrap())
+            app.set_header_title(tr("Maprisma Bluetooth Monitor").into());
+            app.set_window_title(tr("Maprisma Bluetooth Monitor").into(), app.core.main_window_id().unwrap())
         } else { Task::none() };
         (app, task)
     }
@@ -1250,6 +1275,7 @@ impl cosmic::Application for Monitor {
 
     fn subscription(&self) -> Subscription<Message> {
         let mut subscriptions = vec![
+            cosmic::iced::time::every(Duration::from_secs(1)).map(|_| Message::LanguageTick),
             Subscription::run_with("bluetooth-monitor-helper", |_| {
                 stream::channel(4, |mut output| async move {
                     run_helper(&mut output).await;
@@ -1280,6 +1306,18 @@ impl cosmic::Application for Monitor {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::LanguageTick => {
+                let settings = Settings::load();
+                if self.settings.language != settings.language {
+                    self.settings = settings;
+                    i18n::set_language(&self.settings.language);
+                    if self.window_mode {
+                        use cosmic::ApplicationExt;
+                        self.set_header_title(tr("Maprisma Bluetooth Monitor").into());
+                        return self.set_window_title(tr("Maprisma Bluetooth Monitor").into(), self.core.main_window_id().unwrap());
+                    }
+                }
+            }
             Message::WindowTick => {
                 if window_control::CLOSE_WINDOW.load(std::sync::atomic::Ordering::Relaxed) {
                     return cosmic::iced::exit();
@@ -1368,6 +1406,16 @@ impl cosmic::Application for Monitor {
                         json!(value.round() as i64)
                     };
                     self.send(json!({"cmd": "set", "device": device, "key": key, "value": value}));
+                }
+            }
+            Message::Language(code) => {
+                self.settings.language = code;
+                self.settings.save();
+                i18n::set_language(&self.settings.language);
+                if self.window_mode {
+                    use cosmic::ApplicationExt;
+                    self.set_header_title(tr("Maprisma Bluetooth Monitor").into());
+                    return self.set_window_title(tr("Maprisma Bluetooth Monitor").into(), self.core.main_window_id().unwrap());
                 }
             }
             Message::LowAt(v) => {

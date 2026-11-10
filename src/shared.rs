@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-pub const APP_NAME: &str = "Maprisma Bluetooth Monitor";
 pub const WINDOW_BUS: &str = "io.github.ubruckhaus.CosmicMaprismaBluetoothMonitor.Window";
 pub fn script_path(name: &str) -> Option<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
