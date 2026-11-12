@@ -4,6 +4,7 @@ mod shared;
 mod window_control;
 mod shot;
 mod corners;
+mod look;
 use shared::script_path;
 // Bluetooth Monitor for COSMIC: batteries and connections of wireless mice,
 // keyboards, trackpads, earphones and controllers in the panel. The icon is
@@ -59,10 +60,33 @@ const POPUP_WIDTH: f32 = 440.0;
 const POPUP_MAX_HEIGHT: f32 = 760.0;
 const DIM: f32 = 0.6;
 
-// Battery states in the GNOME palette (the Omarchy widget used the theme's colours).
-const OK: Color = Color::from_rgb(0x33 as f32 / 255.0, 0xd1 as f32 / 255.0, 0x7a as f32 / 255.0);
-const LOW: Color = Color::from_rgb(1.0, 0x78 as f32 / 255.0, 0.0);
-const CRITICAL: Color = Color::from_rgb(0xe0 as f32 / 255.0, 0x1b as f32 / 255.0, 0x24 as f32 / 255.0);
+// Battery states in the theme's state colours (as the Omarchy widget): charging/fine green,
+// low the warning colour, critical the destructive colour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Level {
+    Ok,
+    Low,
+    Critical,
+}
+
+impl Level {
+    fn color(self, theme: &cosmic::Theme) -> Color {
+        let c = theme.cosmic();
+        match self {
+            Level::Ok => c.success_color(),
+            Level::Low => c.warning_color(),
+            Level::Critical => c.destructive_color(),
+        }
+        .into()
+    }
+
+    fn text(self) -> theme::Text {
+        fn ok(t: &cosmic::Theme) -> iced_text::Style { iced_text::Style { color: Some(Level::Ok.color(t)), ..Default::default() } }
+        fn low(t: &cosmic::Theme) -> iced_text::Style { iced_text::Style { color: Some(Level::Low.color(t)), ..Default::default() } }
+        fn critical(t: &cosmic::Theme) -> iced_text::Style { iced_text::Style { color: Some(Level::Critical.color(t)), ..Default::default() } }
+        theme::Text::Custom(match self { Level::Ok => ok, Level::Low => low, Level::Critical => critical })
+    }
+}
 
 fn main() -> cosmic::iced::Result {
     if std::env::args().any(|arg| arg == "--window") {
@@ -422,10 +446,10 @@ fn dim<'a>(content: impl Into<std::borrow::Cow<'a, str>> + 'a) -> Element<'a, Me
     text::caption(content).class(theme::Text::Custom(dim_text)).into()
 }
 
-fn tinted(name: &str, size: u16, color: Option<Color>, opacity: f32) -> Element<'static, Message> {
+fn tinted(name: &str, size: u16, level: Option<Level>, opacity: f32) -> Element<'static, Message> {
     let mut i = icon::from_name(name.to_string()).size(size).symbolic(true).icon().opacity(opacity);
-    if let Some(c) = color {
-        i = i.class(theme::Svg::custom(move |_| iced_svg::Style { color: Some(c) }));
+    if let Some(level) = level {
+        i = i.class(theme::Svg::custom(move |theme| iced_svg::Style { color: Some(level.color(theme)) }));
     }
     i.into()
 }
@@ -481,7 +505,7 @@ fn choices<'a>(options: Vec<(Value, String)>, value: &Value, pick: impl Fn(Value
 
 // Caption and hint on the left, a control on the right.
 fn setting_row<'a>(caption: &str, hint: &str, control: Element<'a, Message>) -> Element<'a, Message> {
-    let mut words = column![text::body(caption.to_string())].spacing(2);
+    let mut words = column![text::body(caption.to_string())].spacing(4);
     if !hint.is_empty() {
         words = words.push(dim(hint.to_string()));
     }
@@ -617,14 +641,14 @@ impl Monitor {
     }
 
     // A colour only for warnings and charging; a fine battery keeps the text colour.
-    fn battery_color(&self, b: Option<&Value>) -> Option<Color> {
+    fn battery_color(&self, b: Option<&Value>) -> Option<Level> {
         let b = b?;
         if flag(b, "charging") {
-            return Some(OK);
+            return Some(Level::Ok);
         }
         match self.battery_state(Some(b)) {
-            2 => Some(CRITICAL),
-            1 => Some(LOW),
+            2 => Some(Level::Critical),
+            1 => Some(Level::Low),
             _ => None,
         }
     }
@@ -696,7 +720,7 @@ impl Monitor {
         let online = shown.iter().filter(|d| flag(d, "online")).count();
         let (state, kind) = self.alert(&shown);
         let size = self.core.applet.suggested_size(true).0;
-        let color = (online > 0).then(|| [OK, LOW, CRITICAL][state as usize]);
+        let color = (online > 0).then(|| [Level::Ok, Level::Low, Level::Critical][state as usize]);
         tinted(kind_icon(&kind), size, color, if online > 0 { 1.0 } else { DIM })
     }
 
@@ -721,14 +745,14 @@ impl Monitor {
         };
         let mut head = row![
             tinted(APP_ICON, 32, None, if online > 0 { 1.0 } else { DIM }),
-            column![text::title4(tr("Maprisma Bluetooth Monitor")), dim(meta)].spacing(2),
+            column![text::title4(tr("Maprisma Bluetooth Monitor")), dim(meta)].spacing(4),
             space::horizontal().width(Length::Fill),
         ]
         .spacing(12)
         .align_y(Alignment::Center);
         if self.page == Page::Main {
             if let Some(p) = self.lowest(&shown) {
-                head = head.push(container(text::caption(trf("Lowest battery {0}%", &[p.to_string()]))).padding([2, 10]).class(pill_style()));
+                head = head.push(container(text::caption(trf("Lowest battery {0}%", &[p.to_string()]))).padding([4, 8]).class(pill_style()));
             }
             let hidden = self.devices().len() - shown.len();
             if hidden > 0 || self.show_hidden {
@@ -779,7 +803,7 @@ impl Monitor {
             content = content.push(if phase == "none" {
                 dim(m)
             } else {
-                text::caption(m).class(theme::Text::Color(LOW)).into()
+                text::caption(m).class(Level::Low.text()).into()
             });
         }
         let devices: Vec<&Value> = if self.show_hidden { self.devices().iter().collect() } else { self.shown() };
@@ -903,13 +927,13 @@ impl Monitor {
                 .spacing(8)
                 .align_y(Alignment::Center)
         ]
-        .spacing(6);
+        .spacing(8);
         let count = links.len();
         for (i, (label, sub, icon_name, devices)) in links.into_iter().enumerate() {
             let live = devices.iter().any(|d| flag(d, "online"));
             let opacity = if live { 1.0 } else { DIM };
             let trunk = if i + 1 == count { "└─" } else { "├─" };
-            let mut text_col = column![text::body(label)].spacing(1);
+            let mut text_col = column![text::body(label)].spacing(4);
             if !sub.is_empty() {
                 text_col = text_col.push(dim(sub));
             }
@@ -939,7 +963,7 @@ impl Monitor {
         } else {
             dim("····")
         };
-        let mut chip = row![dots, tinted(kind_icon(s(d, "kind")), 16, None, opacity)].spacing(6).align_y(Alignment::Center);
+        let mut chip = row![dots, tinted(kind_icon(s(d, "kind")), 16, None, opacity)].spacing(8).align_y(Alignment::Center);
         let name = device_name(d);
         chip = chip.push(if online { text::caption(name).into() } else { dim(name) });
         if !online {
@@ -948,7 +972,7 @@ impl Monitor {
             let color = self.battery_color(Some(b));
             chip = chip.push(tinted(&battery_icon(b), 16, color, 1.0));
             chip = chip.push(match color {
-                Some(c) => text::caption(battery_text(b)).class(theme::Text::Color(c)),
+                Some(c) => text::caption(battery_text(b)).class(c.text()),
                 None => text::caption(battery_text(b)),
             });
         }
@@ -987,16 +1011,16 @@ impl Monitor {
         let name = device_name(d);
         let mut main = row![
             tinted(kind_icon(s(d, "kind")), 24, None, opacity),
-            column![if online { text::heading(name).into() } else { dim(name) }, dim(status)].spacing(2),
+            column![if online { text::heading(name).into() } else { dim(name) }, dim(status)].spacing(4),
             space::horizontal().width(Length::Fill),
         ]
-        .spacing(10)
+        .spacing(12)
         .align_y(Alignment::Center);
         if online && let Some(b) = battery(d) {
             let color = self.battery_color(Some(b));
             main = main.push(tinted(&battery_icon(b), 16, color, 1.0));
             main = main.push(match color {
-                Some(c) => text::body(battery_text(b)).class(theme::Text::Color(c)),
+                Some(c) => text::body(battery_text(b)).class(c.text()),
                 None => text::body(battery_text(b)),
             });
         }
@@ -1042,7 +1066,7 @@ impl Monitor {
 
     fn device_settings<'a>(&'a self, d: &'a Value) -> Element<'a, Message> {
         let id = s(d, "id").to_string();
-        let mut col = column![].spacing(10);
+        let mut col = column![].spacing(12);
         if let Some(dpi) = d.get("dpi").filter(|v| int(v, "max").unwrap_or(0) > 0) {
             let default = int(dpi, "default");
             let value = int(dpi, "value").unwrap_or(0) as f64;
@@ -1235,7 +1259,7 @@ impl Monitor {
     fn bt_row<'a>(&'a self, r: &'a BtRow, available: bool) -> Element<'a, Message> {
         let pending = self.pending.get(&r.address).map(|p| p.0);
         let asking = self.confirm_forget == r.address;
-        let mut words = column![text::heading(r.name.clone())].spacing(2);
+        let mut words = column![text::heading(r.name.clone())].spacing(4);
         let status = match pending {
             Some("forgetting") => tr("Forgetting…").to_string(),
             Some("disconnecting") => tr("Disconnecting…").to_string(),
@@ -1256,7 +1280,7 @@ impl Monitor {
             tinted(bluez_icon(&r.icon, r.connected), 20, None, if r.connected { 1.0 } else { DIM }),
             container(words).width(Length::Fill),
         ]
-        .spacing(10)
+        .spacing(12)
         .align_y(Alignment::Center);
         let idle = pending.is_none();
         if !available {
@@ -1331,7 +1355,11 @@ impl cosmic::Application for Monitor {
         let task = if window_mode {
             use cosmic::ApplicationExt;
             app.set_header_title(tr("Maprisma Bluetooth Monitor").into());
-            app.set_window_title(tr("Maprisma Bluetooth Monitor").into(), app.core.main_window_id().unwrap())
+            // The desktop's theme for the whole window (title bar too), see look.rs.
+            Task::batch([
+                app.set_window_title(tr("Maprisma Bluetooth Monitor").into(), app.core.main_window_id().unwrap()),
+                corners::set_app_theme(&app.settings.corners),
+            ])
         } else { Task::none() };
         (app, task)
     }
@@ -1390,19 +1418,24 @@ impl cosmic::Application for Monitor {
                 let settings = Settings::load();
                 // F12 and Corners changed in another interface (window, applet) take effect here too.
                 self.settings.screenshot_key = settings.screenshot_key;
-                if self.settings.corners != settings.corners {
+                let mut restyle = self.settings.corners != settings.corners;
+                if restyle {
                     corners::set_current(&settings.corners);
                     self.settings.corners = settings.corners.clone();
                 }
+                // The desktop's colours and corners (Maprisma Theme can change them any time).
+                restyle |= look::refresh();
+                let restyle = if restyle && self.window_mode { corners::set_app_theme(&self.settings.corners) } else { Task::none() };
                 if self.settings.language != settings.language {
                     self.settings = settings;
                     i18n::set_language(&self.settings.language);
                     if self.window_mode {
                         use cosmic::ApplicationExt;
                         self.set_header_title(tr("Maprisma Bluetooth Monitor").into());
-                        return self.set_window_title(tr("Maprisma Bluetooth Monitor").into(), self.core.main_window_id().unwrap());
+                        return Task::batch([restyle, self.set_window_title(tr("Maprisma Bluetooth Monitor").into(), self.core.main_window_id().unwrap())]);
                     }
                 }
+                return restyle;
             }
             Message::WindowTick => {
                 if window_control::CLOSE_WINDOW.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1509,6 +1542,7 @@ impl cosmic::Application for Monitor {
                 self.settings.corners = choice.to_string();
                 self.settings.save();
                 corners::set_current(choice);
+                if self.window_mode { return corners::set_app_theme(choice); }
             }
             Message::Refresh => self.send(json!({"cmd": "refresh"})),
             Message::Page(page) => return self.set_page(page),
@@ -1654,7 +1688,7 @@ impl cosmic::Application for Monitor {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        if self.window_mode { return corners::apply(&self.settings.corners, self.popup_content()); }
+        if self.window_mode { return corners::apply_window(&self.settings.corners, self.popup_content()); }
         let horizontal = matches!(self.core.applet.anchor, PanelAnchor::Top | PanelAnchor::Bottom);
         let padding = self.core.applet.suggested_padding(true).0;
         let button = button::custom(self.panel_content())
@@ -1671,7 +1705,7 @@ impl cosmic::Application for Monitor {
     }
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
-        if self.window_mode { return corners::apply(&self.settings.corners, self.popup_content()); }
+        if self.window_mode { return corners::apply_window(&self.settings.corners, self.popup_content()); }
         corners::apply(&self.settings.corners, self.core.applet.popup_container(self.popup_content()))
     }
 
@@ -1720,13 +1754,13 @@ impl Monitor {
                     .on_submit(|_| Message::NoteDone),
                 row![space::horizontal().width(Length::Fill), button::suggested(tr("Done").to_string()).on_press(Message::NoteDone)],
             ]
-            .spacing(10)
+            .spacing(12)
             .into(),
             shot::Phase::Error(reason) => column![
                 text::body(reason.clone()),
                 row![space::horizontal().width(Length::Fill), button::suggested(tr("Done").to_string()).on_press(Message::NoteDone)],
             ]
-            .spacing(10)
+            .spacing(12)
             .into(),
             _ => return None,
         };
@@ -1744,7 +1778,7 @@ impl Monitor {
             Page::Settings => self.settings_page(),
             Page::Bluetooth => self.bluetooth_page(),
         };
-        let inner = column![self.header(), divider::horizontal::default(), body].spacing(10);
+        let inner = column![self.header(), divider::horizontal::default(), body].spacing(12);
         let details = scrollable(container(inner).width(Length::Fill).padding([12, 16])).height(if self.window_mode { Length::Fill } else { Length::Shrink });
         let mut content = column![container(details).max_height(if self.window_mode { f32::INFINITY } else { POPUP_MAX_HEIGHT })].width(if self.window_mode { Length::Fill } else { Length::Fixed(POPUP_WIDTH) });
         if self.page == Page::Main {
