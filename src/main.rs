@@ -95,6 +95,9 @@ fn main() -> cosmic::iced::Result {
             .serve_at("/Window", window_control::WindowControl).expect("window control")
             .build().expect("session bus connection");
         if connection.request_name_with_flags(shared::WINDOW_BUS, zbus::fdo::RequestNameFlags::DoNotQueue.into()).is_err() {
+            // A second `--window` start toggles (layout rule 5a): the open window is told to close,
+            // as its tray does, so every entry point (tray, Maprisma Shell's glyph) toggles.
+            let _ = connection.call_method(Some(shared::WINDOW_BUS), "/Window", Some("io.github.ubruckhaus.BluetoothMonitor.Window"), "Close", &());
             return Ok(());
         }
         let result = cosmic::app::run::<Monitor>(cosmic::app::Settings::default()
