@@ -253,10 +253,13 @@ pub fn reload() -> bool {
 /// every 5 s, Hyprland's rounding (a process) every 30 s; true when something changed.
 pub fn refresh() -> bool {
     let d = desktop();
-    let (due, radius_due) = match STATE.read().ok().as_deref().and_then(Option::as_ref) {
-        None => return reload(),
-        Some(s) => (s.read.elapsed().as_secs() >= 5, s.radius_read.elapsed().as_secs() >= 30),
-    };
+    // The read lock ends with this statement: reload() below takes the write lock (a guard held
+    // through a `match` would deadlock when nothing was read yet).
+    let ages = STATE
+        .read()
+        .ok()
+        .and_then(|s| s.as_ref().map(|s| (s.read.elapsed().as_secs() >= 5, s.radius_read.elapsed().as_secs() >= 30)));
+    let Some((due, radius_due)) = ages else { return reload() };
     if !due {
         return false;
     }
