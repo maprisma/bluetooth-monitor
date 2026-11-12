@@ -261,11 +261,28 @@ impl Tray {
     #[zbus(signal)]
     async fn new_tool_tip(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 }
+/// A window this tray started is still running (it may not have claimed its name yet).
+static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The open window's connection. A window this tray just started gets up to 2 s to claim its
+/// name, so a second click while it is starting closes it instead of being lost.
+async fn window_owner(dbus: &zbus::fdo::DBusProxy<'_>) -> Option<zbus::names::OwnedUniqueName> {
+    for _ in 0..40 {
+        if let Ok(owner) = dbus.get_name_owner(WINDOW_BUS.try_into().unwrap()).await {
+            return Some(owner);
+        }
+        if !STARTED.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    None
+}
 async fn open_window(connection: &Connection, toggle: bool) {
     let Ok(dbus) = zbus::fdo::DBusProxy::new(connection).await else { return };
     // The window's own connection (its unique name), so a close never reaches
     // a window that took the well-known name meanwhile.
-    if let Ok(owner) = dbus.get_name_owner(WINDOW_BUS.try_into().unwrap()).await {
+    if let Some(owner) = window_owner(&dbus).await {
         if toggle {
             if let Ok(proxy) = zbus::Proxy::new(
                 connection,
@@ -284,8 +301,10 @@ async fn open_window(connection: &Connection, toggle: bool) {
         .unwrap()
         .with_file_name("maprisma-bluetooth-monitor");
     if let Ok(mut child) = std::process::Command::new(exe).arg("--window").spawn() {
+        STARTED.store(true, std::sync::atomic::Ordering::Relaxed);
         std::thread::spawn(move || {
             let _ = child.wait();
+            STARTED.store(false, std::sync::atomic::Ordering::Relaxed);
         });
     }
 }

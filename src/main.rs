@@ -5,6 +5,7 @@ mod window_control;
 mod shot;
 mod corners;
 mod look;
+mod window_size;
 use shared::script_path;
 // Bluetooth Monitor for COSMIC: batteries and connections of wireless mice,
 // keyboards, trackpads, earphones and controllers in the panel. The icon is
@@ -97,7 +98,7 @@ fn main() -> cosmic::iced::Result {
             return Ok(());
         }
         let result = cosmic::app::run::<Monitor>(cosmic::app::Settings::default()
-            .size(cosmic::iced::Size::new(POPUP_WIDTH, POPUP_MAX_HEIGHT))
+            .size({ let (width, height) = window_start_size(); cosmic::iced::Size::new(width, height) })
             .resizable(Some(8.0)).transparent(false).is_daemon(false), true);
         drop(connection);
         result
@@ -272,6 +273,40 @@ impl Default for Settings {
     }
 }
 
+// The settings file as it is now (an empty object when missing or broken).
+fn config_value() -> Value {
+    config_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|data| serde_json::from_str::<Value>(&data).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}))
+}
+
+// Written through a temp file in the same folder, then renamed.
+fn write_config(data: &Value) {
+    let Some(path) = config_path() else { return };
+    let Some(dir) = path.parent() else { return };
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let tmp = dir.join(format!(".settings.json.{}", std::process::id()));
+    if std::fs::write(&tmp, format!("{data:#}\n")).is_ok() && std::fs::rename(&tmp, &path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+// The `--window` size: the one the user left it at (layout rule 5a), else the popup's.
+fn window_start_size() -> window_size::Size {
+    window_size::parse(config_value().get(window_size::KEY)).unwrap_or((POPUP_WIDTH, POPUP_MAX_HEIGHT))
+}
+
+// Only the window size changes; the other settings stay as they are in the file.
+fn save_window_size(size: window_size::Size) {
+    let mut data = config_value();
+    data[window_size::KEY] = window_size::to_value(size);
+    write_config(&data);
+}
+
 fn config_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -302,13 +337,8 @@ impl Settings {
         out
     }
 
-    // Written through a temp file in the same folder, then renamed.
+    // The window size another process saved stays.
     fn save(&self) {
-        let Some(path) = config_path() else { return };
-        let Some(dir) = path.parent() else { return };
-        if std::fs::create_dir_all(dir).is_err() {
-            return;
-        }
         let mut data = json!({
             "language": self.language,
             "low_at": self.low_at,
@@ -321,10 +351,10 @@ impl Settings {
         if self.corners != "desktop" {
             data["corners"] = json!(self.corners);
         }
-        let tmp = dir.join(format!(".settings.json.{}", std::process::id()));
-        if std::fs::write(&tmp, format!("{data:#}\n")).is_ok() && std::fs::rename(&tmp, &path).is_err() {
-            let _ = std::fs::remove_file(&tmp);
+        if let Some(size) = config_value().get(window_size::KEY) {
+            data[window_size::KEY] = size.clone();
         }
+        write_config(&data);
     }
 }
 
@@ -547,6 +577,36 @@ struct Monitor {
     // F12: the note's state, whether a capture is on its way.
     shot: shot::Phase,
     capturing: bool,
+    resize: window_size::Debounce,
+}
+
+/// What Esc does (layout rule 5a): the innermost open thing first, then the window or popup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EscStep {
+    /// Skip the screenshot's note (or close its error).
+    Note,
+    /// Drop the "Forget?" question.
+    Confirm,
+    /// Back from Settings / Bluetooth to the main page.
+    Back,
+    /// Close the window (`--window`) or the popup.
+    Close,
+    Nothing,
+}
+
+/// `shown`: Esc came from the window or the open popup (not the panel button).
+fn esc_step(shown: bool, note: bool, confirm: bool, side_page: bool) -> EscStep {
+    if !shown {
+        EscStep::Nothing
+    } else if note {
+        EscStep::Note
+    } else if confirm {
+        EscStep::Confirm
+    } else if side_page {
+        EscStep::Back
+    } else {
+        EscStep::Close
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -579,7 +639,7 @@ enum Message {
     BtPower(bool),
     Forget(String),
     ShotKey(window::Id),
-    Escape,
+    Escape(window::Id),
     Captured(window::Screenshot),
     ShotSaved(Result<shot::Saved, String>),
     NoteInput(String),
@@ -675,6 +735,16 @@ impl Monitor {
 
     fn scanning(&self) -> bool {
         (self.window_mode || self.popup.is_some()) && self.page == Page::Bluetooth && self.bt.powered
+    }
+
+    // A resize that has settled (or, on `closing`, any waiting one) goes to settings.json; not
+    // while maximised, fullscreen or tiled (libcosmic's sharp corners).
+    fn save_size(&mut self, closing: bool) {
+        let ignore = self.core.window.sharp_corners;
+        let size = if closing { self.resize.flush(ignore) } else { self.resize.due(Instant::now(), ignore) };
+        if let Some(size) = size {
+            save_window_size(size);
+        }
     }
 
     fn set_page(&mut self, page: Page) -> Task<Message> {
@@ -1350,6 +1420,7 @@ impl cosmic::Application for Monitor {
 
     fn init(core: Core, window_mode: bool) -> (Self, Task<Message>) {
         let mut app = Self { core, window_mode, settings: Settings::load(), ..Default::default() };
+        if window_mode { app.resize = window_size::Debounce::new(window_start_size()); }
         i18n::set_language(&app.settings.language);
         corners::set_current(&app.settings.corners);
         let task = if window_mode {
@@ -1368,6 +1439,12 @@ impl cosmic::Application for Monitor {
         Some(Message::CloseRequested(id))
     }
 
+    fn on_window_resize(&mut self, id: window::Id, width: f32, height: f32) {
+        if self.window_mode && self.core.main_window_id() == Some(id) {
+            self.resize.resized(width, height, Instant::now());
+        }
+    }
+
     fn subscription(&self) -> Subscription<Message> {
         let mut subscriptions = vec![
             cosmic::iced::time::every(Duration::from_secs(1)).map(|_| Message::LanguageTick),
@@ -1382,13 +1459,16 @@ impl cosmic::Application for Monitor {
         } else {
             subscriptions.push(rectangle_tracker_subscription(0).map(|update| Message::Rectangle(update.1)));
         }
-        // F12 (no modifiers) in the popup or window; Esc skips the screenshot's note.
-        subscriptions.push(cosmic::iced::event::listen_with(|event, _, id| match event {
+        // F12 (no modifiers) in the popup or window; Esc closes the innermost thing (esc_step).
+        subscriptions.push(cosmic::iced::event::listen_with(|event, status, id| match event {
             cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                 if shot::is_shot_key(&key, modifiers) {
                     Some(Message::ShotKey(id))
-                } else if matches!(key, cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape)) {
-                    Some(Message::Escape)
+                } else if status == cosmic::iced::event::Status::Ignored
+                    && matches!(key, cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape))
+                {
+                    // Not one an open drop-down list took to close itself.
+                    Some(Message::Escape(id))
                 } else {
                     None
                 }
@@ -1439,8 +1519,10 @@ impl cosmic::Application for Monitor {
             }
             Message::WindowTick => {
                 if window_control::CLOSE_WINDOW.load(std::sync::atomic::Ordering::Relaxed) {
+                    self.save_size(true);
                     return cosmic::iced::exit();
                 }
+                if self.resize.waiting() { self.save_size(false); }
             }
             Message::Snapshot(stats) => self.stats = stats,
             Message::HelperStarted(sender) => {
@@ -1456,7 +1538,7 @@ impl cosmic::Application for Monitor {
                 RectangleUpdate::Init(tracker) => self.tracker = Some(tracker),
             },
             Message::CloseRequested(id) => {
-                if self.window_mode { return cosmic::iced::exit(); }
+                if self.window_mode { self.save_size(true); return cosmic::iced::exit(); }
                 if self.popup == Some(id) {
                     self.popup = None;
                     self.send(json!({"cmd": "closed"}));
@@ -1526,8 +1608,17 @@ impl cosmic::Application for Monitor {
                 }
             }
             Message::NoteDone => return self.finish_note(true),
-            Message::Escape => {
-                if self.shot.open() { return self.finish_note(false); }
+            Message::Escape(id) => {
+                let shown = if self.window_mode { self.core.main_window_id() == Some(id) } else { self.popup == Some(id) };
+                match esc_step(shown, self.shot.open(), !self.confirm_forget.is_empty(), self.page != Page::Main) {
+                    EscStep::Note => return self.finish_note(false),
+                    EscStep::Confirm => self.confirm_forget.clear(),
+                    EscStep::Back => return self.set_page(Page::Main),
+                    // Like the window's own close (the tray keeps running); the popup like a click on the icon.
+                    EscStep::Close if self.window_mode => return self.update(Message::CloseRequested(id)),
+                    EscStep::Close => return self.update(Message::TogglePopup),
+                    EscStep::Nothing => {}
+                }
             }
             Message::NoteSaved(result) => match result {
                 Ok(()) => { if self.shot == shot::Phase::Noting { self.shot = shot::Phase::Idle; } }
@@ -1882,6 +1973,17 @@ fn spawn(argv: Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn esc_closes_the_innermost_thing_first() {
+        assert_eq!(esc_step(true, true, true, true), EscStep::Note);
+        assert_eq!(esc_step(true, false, true, true), EscStep::Confirm);
+        assert_eq!(esc_step(true, false, false, true), EscStep::Back);
+        assert_eq!(esc_step(true, false, false, false), EscStep::Close);
+        // Not from the window or the open popup (e.g. the panel button): nothing.
+        assert_eq!(esc_step(false, true, true, true), EscStep::Nothing);
+        assert_eq!(esc_step(false, false, false, false), EscStep::Nothing);
+    }
 
     #[test]
     fn bluez_listing() {
