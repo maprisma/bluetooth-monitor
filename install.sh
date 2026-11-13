@@ -20,7 +20,8 @@ for s in bt-device.sh bt-power.sh allow-access.sh; do
   install -Dm755 "scripts/$s" "$data/maprisma-bluetooth-monitor/scripts/$s"
 done
 install -Dm644 "data/icons/$id-symbolic.svg" "$data/icons/hicolor/scalable/apps/$id-symbolic.svg"
-# The tray shows this one while no device is connected.
+# The tray shows the accent one while a device is connected, the hollow one otherwise.
+install -Dm644 data/icons/bluetooth-monitor-active-symbolic.svg "$data/icons/hicolor/scalable/apps/$id-active-symbolic.svg"
 install -Dm644 data/icons/bluetooth-monitor-off-symbolic.svg "$data/icons/hicolor/scalable/apps/$id-off-symbolic.svg"
 # The panel starts applets without ~/.local/bin in PATH: the full path.
 install -d "$data/applications"

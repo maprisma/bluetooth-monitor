@@ -75,9 +75,9 @@ fn visible<'a>(snapshot: &'a serde_json::Value, settings: &serde_json::Value) ->
         })
         .collect()
 }
-/// The bar's icon: the full mouse and battery while a device is connected, else the hollow one.
+/// The bar's icon: the full mouse and battery in the accent while a device is connected, else the hollow one.
 pub fn icon_for(snapshot: &serde_json::Value, settings: &serde_json::Value) -> &'static str {
-    if visible(snapshot, settings).is_empty() { super::ICON_OFF } else { super::ICON }
+    if visible(snapshot, settings).is_empty() { super::ICON_OFF } else { super::ICON_ACTIVE }
 }
 pub fn tooltip(snapshot: &serde_json::Value, settings: &serde_json::Value) -> String {
     let visible = visible(snapshot, settings);
@@ -110,7 +110,7 @@ mod tests {
     #[test]
     fn icon_follows_connections() {
         let s = json!({"devices":[{"id":"a","online":true}, {"id":"b","online":false}]});
-        assert_eq!(icon_for(&s, &json!({})), super::super::ICON);
+        assert_eq!(icon_for(&s, &json!({})), super::super::ICON_ACTIVE);
         assert_eq!(icon_for(&s, &json!({"hidden":["a"]})), super::super::ICON_OFF);
         assert_eq!(icon_for(&json!({}), &json!({})), super::super::ICON_OFF);
         assert_eq!(icon_for(&serde_json::Value::Null, &json!({})), super::super::ICON_OFF);

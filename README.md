@@ -104,7 +104,7 @@ The installer also installs `maprisma-bluetooth-monitor-tray` and a KDE-only
 entry in `${XDG_CONFIG_HOME:-~/.config}/autostart`. Log in again or start that
 binary manually. Left click toggles the window; its menu offers **Open Maprisma
 Bluetooth Monitor** and **Quit tray** (which leaves an open window running).
-The icon is full while a device is connected and hollow (mouse and empty battery)
+The icon is full and drawn in the accent colour while a device is connected, hollow (mouse and empty battery)
 otherwise, as the COSMIC applet dims it. The tooltip reports connected devices and their lowest battery, respecting hidden
 devices. The tray runs the shared helper in its cheaper closed mode and reconnects
 when Plasma's tray watcher restarts. Both binaries require a session D-Bus.
