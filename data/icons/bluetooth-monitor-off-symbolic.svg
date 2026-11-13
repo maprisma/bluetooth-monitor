@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><defs><style type="text/css" id="current-color-scheme">.ColorScheme-Text { color:#232629; }</style></defs>
+  <!-- No device connected: a hollow mouse and an empty battery. -->
+  <path fill="currentColor" fill-rule="evenodd" class="ColorScheme-Text" d="M5 1a4 4 0 0 0-4 4v6a4 4 0 0 0 8 0V5a4 4 0 0 0-4-4zm0 1.5A2.5 2.5 0 0 1 7.5 5v6a2.5 2.5 0 0 1-5 0V5A2.5 2.5 0 0 1 5 2.5z"/>
+  <rect fill="currentColor" class="ColorScheme-Text" x="4.4" y="3.5" width="1.2" height="2.5" rx=".6"/>
+  <path fill="currentColor" class="ColorScheme-Text" d="M12 3h2v1h1v11h-4V4h1zm0 2.5v8h2v-8z"/>
+</svg>

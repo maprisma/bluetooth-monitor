@@ -56,12 +56,12 @@ pub fn settings() -> serde_json::Value {
         .and_then(|s| serde_json::from_slice(&s).ok())
         .unwrap_or_default()
 }
-pub fn tooltip(snapshot: &serde_json::Value, settings: &serde_json::Value) -> String {
-    let devices = snapshot["devices"]
+/// The devices the tray counts as connected: online and not hidden in the settings.
+fn visible<'a>(snapshot: &'a serde_json::Value, settings: &serde_json::Value) -> Vec<&'a serde_json::Value> {
+    snapshot["devices"]
         .as_array()
         .map(Vec::as_slice)
-        .unwrap_or(&[]);
-    let visible: Vec<_> = devices
+        .unwrap_or(&[])
         .iter()
         .filter(|d| {
             let key = d["key"]
@@ -73,7 +73,14 @@ pub fn tooltip(snapshot: &serde_json::Value, settings: &serde_json::Value) -> St
                     .as_array()
                     .is_some_and(|h| h.iter().any(|v| v.as_str() == key))
         })
-        .collect();
+        .collect()
+}
+/// The bar's icon: the full mouse and battery while a device is connected, else the hollow one.
+pub fn icon_for(snapshot: &serde_json::Value, settings: &serde_json::Value) -> &'static str {
+    if visible(snapshot, settings).is_empty() { super::ICON_OFF } else { super::ICON }
+}
+pub fn tooltip(snapshot: &serde_json::Value, settings: &serde_json::Value) -> String {
+    let visible = visible(snapshot, settings);
     if visible.is_empty() {
         return tr("No devices connected").into();
     }
@@ -99,6 +106,14 @@ mod tests {
         assert_eq!(m.activate(2), Some(Action::Quit));
         assert_eq!(m.activate(0), None);
         assert_eq!(m.activate(99), None);
+    }
+    #[test]
+    fn icon_follows_connections() {
+        let s = json!({"devices":[{"id":"a","online":true}, {"id":"b","online":false}]});
+        assert_eq!(icon_for(&s, &json!({})), super::super::ICON);
+        assert_eq!(icon_for(&s, &json!({"hidden":["a"]})), super::super::ICON_OFF);
+        assert_eq!(icon_for(&json!({}), &json!({})), super::super::ICON_OFF);
+        assert_eq!(icon_for(&serde_json::Value::Null, &json!({})), super::super::ICON_OFF);
     }
     #[test]
     fn tooltip_states() {

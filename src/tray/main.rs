@@ -16,12 +16,15 @@ use zbus::{
 };
 
 pub const ICON: &str = "io.github.ubruckhaus.CosmicMaprismaBluetoothMonitor-symbolic";
+/// No device connected (data/icons/bluetooth-monitor-off-symbolic.svg, installed under this name).
+pub const ICON_OFF: &str = "io.github.ubruckhaus.CosmicMaprismaBluetoothMonitor-off-symbolic";
 
 type Props = HashMap<String, OwnedValue>;
 type Layout = (i32, Props, Vec<OwnedValue>);
 type Pixmaps = Vec<(i32, i32, Vec<u8>)>;
 struct State {
     tooltip: String,
+    icon: &'static str,
     menu: model::Item,
     revision: u32,
 }
@@ -205,8 +208,8 @@ impl Tray {
         0
     }
     #[zbus(property)]
-    fn icon_name(&self) -> &str {
-        ICON
+    async fn icon_name(&self) -> &str {
+        self.state.lock().await.icon
     }
     #[zbus(property)]
     fn icon_pixmap(&self) -> Pixmaps {
@@ -261,6 +264,8 @@ impl Tray {
     async fn new_status(emitter: &SignalEmitter<'_>, status: &str) -> zbus::Result<()>;
     #[zbus(signal)]
     async fn new_tool_tip(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+    #[zbus(signal)]
+    async fn new_icon(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 }
 /// A window this tray started is still running (it may not have claimed its name yet).
 static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -351,6 +356,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     i18n::set_language(model::settings()["language"].as_str().unwrap_or("auto"));
     let state = Arc::new(Mutex::new(State {
         tooltip: tr("Looking for devices …").into(),
+        icon: ICON_OFF,
         menu: model::menu(),
         revision: 1,
     }));
@@ -442,12 +448,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Some(snapshot) = status_rx.recv() => {
                 latest = snapshot;
-                let text = model::tooltip(&latest, &model::settings());
+                let settings = model::settings();
+                let text = model::tooltip(&latest, &settings);
+                let icon = model::icon_for(&latest, &settings);
                 let mut s = state.lock().await;
-                if s.tooltip != text {
-                    s.tooltip = text;
-                    drop(s);
+                let tip_changed = s.tooltip != text;
+                let icon_changed = s.icon != icon;
+                s.tooltip = text;
+                s.icon = icon;
+                drop(s);
+                if tip_changed {
                     Tray::new_tool_tip(&SignalEmitter::new(&connection, "/StatusNotifierItem")?).await?;
+                }
+                if icon_changed {
+                    Tray::new_icon(&SignalEmitter::new(&connection, "/StatusNotifierItem")?).await?;
                 }
             }
             Some(action) = rx.recv() => match action {
@@ -482,7 +496,7 @@ mod tests {
     }
     #[tokio::test]
     async fn menu_dispatch() {
-        let state = Arc::new(Mutex::new(State { tooltip: String::new(), menu: model::menu(), revision: 1 }));
+        let state = Arc::new(Mutex::new(State { tooltip: String::new(), icon: ICON_OFF, menu: model::menu(), revision: 1 }));
         let (tx, mut rx) = mpsc::unbounded_channel();
         let menu = Menu { state, tx };
         assert!(!menu.dispatch(99, "clicked").await);
