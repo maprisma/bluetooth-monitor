@@ -75,7 +75,7 @@ fn visible<'a>(snapshot: &'a serde_json::Value, settings: &serde_json::Value) ->
         })
         .collect()
 }
-/// The bar's icon: the full mouse and battery in the accent while a device is connected, else the hollow one.
+/// The bar's icon: the full mouse and battery in green while a device is connected, else the hollow one.
 pub fn icon_for(snapshot: &serde_json::Value, settings: &serde_json::Value) -> &'static str {
     if visible(snapshot, settings).is_empty() { super::ICON_OFF } else { super::ICON_ACTIVE }
 }
