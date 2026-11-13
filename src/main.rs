@@ -47,6 +47,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 const APP_ID: &str = "io.github.ubruckhaus.CosmicMaprismaBluetoothMonitor";
+const WINDOW_APP_ID: &str = "io.github.ubruckhaus.CosmicMaprismaBluetoothMonitor.Window";
 static NOTE_ID: LazyLock<cosmic::widget::Id> = LazyLock::new(|| cosmic::widget::Id::new("bluetooth-monitor-shot-note"));
 // F12 pictures go to ~/Pictures/<this>/ (the app's name, the same in every language).
 const SHOT_FOLDER: &str = "Maprisma Bluetooth Monitor";
@@ -100,7 +101,7 @@ fn main() -> cosmic::iced::Result {
             let _ = connection.call_method(Some(shared::WINDOW_BUS), "/Window", Some("io.github.ubruckhaus.BluetoothMonitor.Window"), "Close", &());
             return Ok(());
         }
-        let result = cosmic::app::run::<Monitor>(cosmic::app::Settings::default()
+        let result = cosmic::app::run::<Monitor<true>>(cosmic::app::Settings::default()
             .size({ let (width, height) = window_start_size(); cosmic::iced::Size::new(width, height) })
             .resizable(Some(8.0)).transparent(false).is_daemon(false), true);
         drop(connection);
@@ -556,7 +557,7 @@ enum Page {
 }
 
 #[derive(Default)]
-struct Monitor {
+struct Monitor<const WINDOW_MODE: bool = false> {
     core: Core,
     window_mode: bool,
     popup: Option<window::Id>,
@@ -666,7 +667,7 @@ fn off_thread<T: Send + 'static>(
     })
 }
 
-impl Monitor {
+impl<const WINDOW_MODE: bool> Monitor<WINDOW_MODE> {
     fn send(&self, obj: Value) {
         if let Some(helper) = &self.helper {
             let _ = helper.send(format!("{obj}\n"));
@@ -1408,11 +1409,13 @@ fn snap_dpi(dpi: &Value, raw: f64) -> i64 {
     (min + (((raw - min as f64) / step as f64).round() as i64) * step).clamp(min, max)
 }
 
-impl cosmic::Application for Monitor {
+impl<const WINDOW_MODE: bool> cosmic::Application for Monitor<WINDOW_MODE> {
     type Executor = cosmic::SingleThreadExecutor;
     type Flags = bool;
     type Message = Message;
-    const APP_ID: &'static str = APP_ID;
+    // Wayland's app id: the panel applet's, or the window's own (`<id>.Window`, the id of the
+    // `.Window.desktop` entry install.sh writes, so taskbars and window rules find it).
+    const APP_ID: &'static str = if WINDOW_MODE { WINDOW_APP_ID } else { APP_ID };
 
     fn core(&self) -> &Core {
         &self.core
@@ -1815,7 +1818,7 @@ impl cosmic::Application for Monitor {
     }
 }
 
-impl Monitor {
+impl<const WINDOW_MODE: bool> Monitor<WINDOW_MODE> {
     // Done, Enter or the popup closing (keep: the note typed so far is saved), Esc (skip).
     fn finish_note(&mut self, keep: bool) -> Task<Message> {
         match std::mem::take(&mut self.shot) {
