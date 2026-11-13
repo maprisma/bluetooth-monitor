@@ -2,6 +2,7 @@
 mod i18n;
 use i18n::tr;
 mod model;
+mod present;
 #[path = "../shared.rs"]
 mod shared;
 use model::Action;
@@ -294,6 +295,9 @@ async fn open_window(connection: &Connection, toggle: bool) {
             {
                 let _ = proxy.call::<_, _, ()>("Close", &()).await;
             }
+        } else {
+            // "Open": a minimized or hidden window comes to the front.
+            present::present(connection, owner.as_str()).await;
         }
         return;
     }
