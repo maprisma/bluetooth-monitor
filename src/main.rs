@@ -9,7 +9,7 @@ mod window_size;
 use shared::script_path;
 // Bluetooth Monitor for COSMIC: batteries and connections of wireless mice,
 // keyboards, trackpads, earphones and controllers in the panel. The icon is
-// green while every connected battery is fine, orange when one runs low and red
+// the theme accent while every connected battery is fine, orange when one runs low and red
 // when one is critical, and it turns into the device that needs charging (mouse
 // on a tie); dim while no device is connected. Left click opens the panel: a
 // connection map (this PC, dongles and Bluetooth adapters, the devices on them),
@@ -67,6 +67,8 @@ const DIM: f32 = 0.6;
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Level {
     Ok,
+    /// The bar icon while a device is connected: the theme accent, as every Maprisma bar icon.
+    On,
     Low,
     Critical,
 }
@@ -76,6 +78,7 @@ impl Level {
         let c = theme.cosmic();
         match self {
             Level::Ok => c.success_color(),
+            Level::On => c.accent_color(),
             Level::Low => c.warning_color(),
             Level::Critical => c.destructive_color(),
         }
@@ -86,7 +89,7 @@ impl Level {
         fn ok(t: &cosmic::Theme) -> iced_text::Style { iced_text::Style { color: Some(Level::Ok.color(t)), ..Default::default() } }
         fn low(t: &cosmic::Theme) -> iced_text::Style { iced_text::Style { color: Some(Level::Low.color(t)), ..Default::default() } }
         fn critical(t: &cosmic::Theme) -> iced_text::Style { iced_text::Style { color: Some(Level::Critical.color(t)), ..Default::default() } }
-        theme::Text::Custom(match self { Level::Ok => ok, Level::Low => low, Level::Critical => critical })
+        theme::Text::Custom(match self { Level::Ok | Level::On => ok, Level::Low => low, Level::Critical => critical })
     }
 }
 
@@ -795,7 +798,7 @@ impl<const WINDOW_MODE: bool> Monitor<WINDOW_MODE> {
         let online = shown.iter().filter(|d| flag(d, "online")).count();
         let (state, kind) = self.alert(&shown);
         let size = self.core.applet.suggested_size(true).0;
-        let color = (online > 0).then(|| [Level::Ok, Level::Low, Level::Critical][state as usize]);
+        let color = (online > 0).then(|| [Level::On, Level::Low, Level::Critical][state as usize]);
         tinted(kind_icon(&kind), size, color, if online > 0 { 1.0 } else { DIM })
     }
 

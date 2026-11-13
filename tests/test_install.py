@@ -12,7 +12,7 @@ class TrayIconTests(unittest.TestCase):
                       installer)
         self.assertTrue((root / "data" / "icons" / "bluetooth-monitor-off-symbolic.svg").is_file())
 
-    def test_active_icon_is_the_green_normal_icon(self):
+    def test_active_icon_is_the_accent_normal_icon(self):
         root = pathlib.Path(__file__).resolve().parents[1]
         installer = (root / "install.sh").read_text()
         tray = (root / "src" / "tray" / "main.rs").read_text()
@@ -20,11 +20,11 @@ class TrayIconTests(unittest.TestCase):
         self.assertIn('data/icons/bluetooth-monitor-active-symbolic.svg "$data/icons/hicolor/scalable/apps/$id-active-symbolic.svg"',
                       installer)
         active = (root / "data" / "icons" / "bluetooth-monitor-active-symbolic.svg").read_text()
-        self.assertIn(".ColorScheme-PositiveText { color:#27ae60; }", active)
+        self.assertIn(".ColorScheme-Highlight { color:#3daee9; }", active)
         self.assertNotIn("ColorScheme-Text", active)
         normal = (root / "data" / "icons" / "io.github.ubruckhaus.CosmicMaprismaBluetoothMonitor-symbolic.svg").read_text()
         shape = lambda svg: [l for l in svg.splitlines() if " d=" in l or "<rect" in l]
-        self.assertEqual([l.replace("PositiveText", "Text") for l in shape(active)], shape(normal))
+        self.assertEqual([l.replace("Highlight", "Text") for l in shape(active)], shape(normal))
 
 
 if __name__ == "__main__":

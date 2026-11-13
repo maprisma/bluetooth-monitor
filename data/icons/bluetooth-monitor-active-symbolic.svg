@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><defs><style type="text/css" id="current-color-scheme">.ColorScheme-PositiveText { color:#27ae60; }</style></defs>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><defs><style type="text/css" id="current-color-scheme">.ColorScheme-Highlight { color:#3daee9; }</style></defs>
   <!-- A device is connected: the normal icon in the theme green. -->
-  <path fill="currentColor" class="ColorScheme-PositiveText" d="M5 1a4 4 0 0 0-4 4v6a4 4 0 0 0 8 0V5a4 4 0 0 0-4-4zm0 1.5a2.5 2.5 0 0 1 2.5 2.5v1.5h-2v-4zm-.75 0v4h-1.75V5A2.5 2.5 0 0 1 4.25 2.5zM2.5 8h5v3a2.5 2.5 0 0 1-5 0z"/>
-  <path fill="currentColor" class="ColorScheme-PositiveText" d="M12 3h2v1h1v11h-4V4h1zm0 2.5v8h2v-8z"/>
-  <rect fill="currentColor" class="ColorScheme-PositiveText" x="12" y="9.5" width="2" height="4"/>
+  <path fill="currentColor" class="ColorScheme-Highlight" d="M5 1a4 4 0 0 0-4 4v6a4 4 0 0 0 8 0V5a4 4 0 0 0-4-4zm0 1.5a2.5 2.5 0 0 1 2.5 2.5v1.5h-2v-4zm-.75 0v4h-1.75V5A2.5 2.5 0 0 1 4.25 2.5zM2.5 8h5v3a2.5 2.5 0 0 1-5 0z"/>
+  <path fill="currentColor" class="ColorScheme-Highlight" d="M12 3h2v1h1v11h-4V4h1zm0 2.5v8h2v-8z"/>
+  <rect fill="currentColor" class="ColorScheme-Highlight" x="12" y="9.5" width="2" height="4"/>
 </svg>

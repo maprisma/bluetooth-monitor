@@ -17,7 +17,7 @@ use zbus::{
 
 pub const ICON: &str = "io.github.ubruckhaus.CosmicMaprismaBluetoothMonitor-symbolic";
 /// No device connected (data/icons/bluetooth-monitor-off-symbolic.svg, installed under this name).
-/// A device is connected: the normal icon in the theme green
+/// A device is connected: the normal icon in the theme accent
 /// (data/icons/bluetooth-monitor-active-symbolic.svg, installed under this name).
 pub const ICON_ACTIVE: &str = "io.github.ubruckhaus.CosmicMaprismaBluetoothMonitor-active-symbolic";
 pub const ICON_OFF: &str = "io.github.ubruckhaus.CosmicMaprismaBluetoothMonitor-off-symbolic";
