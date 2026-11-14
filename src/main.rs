@@ -560,6 +560,15 @@ enum Page {
     Bluetooth,
 }
 
+/// A value list of the settings page, opened inline under its row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingList {
+    Language,
+    LowAt,
+    CriticalAt,
+    Corners,
+}
+
 #[derive(Default)]
 struct Monitor<const WINDOW_MODE: bool = false> {
     core: Core,
@@ -571,6 +580,8 @@ struct Monitor<const WINDOW_MODE: bool = false> {
     settings: Settings,
     helper: Option<UnboundedSender<String>>,
     page: Page,
+    /// The settings page's open value list (Language, warnings, Corners).
+    open_list: Option<SettingList>,
     show_hidden: bool,
     expanded: BTreeSet<String>,
     confirm_forget: String,
@@ -595,6 +606,8 @@ enum EscStep {
     Note,
     /// Drop the "Forget?" question.
     Confirm,
+    /// Close the settings page's open list.
+    Menus,
     /// Back from Settings / Bluetooth to the main page.
     Back,
     /// Close the window (`--window`) or the popup.
@@ -602,14 +615,17 @@ enum EscStep {
     Nothing,
 }
 
-/// `shown`: Esc came from the window or the open popup (not the panel button).
-fn esc_step(shown: bool, note: bool, confirm: bool, side_page: bool) -> EscStep {
+/// `shown`: Esc came from the window or the open popup (not the panel button); `menus`: a
+/// list of the settings page is open; `side_page`: Settings or Bluetooth shows.
+fn esc_step(shown: bool, note: bool, confirm: bool, menus: bool, side_page: bool) -> EscStep {
     if !shown {
         EscStep::Nothing
     } else if note {
         EscStep::Note
     } else if confirm {
         EscStep::Confirm
+    } else if menus {
+        EscStep::Menus
     } else if side_page {
         EscStep::Back
     } else {
@@ -635,6 +651,7 @@ enum Message {
     Drag(String, &'static str, f64),
     Release(String, &'static str),
     Language(String),
+    ToggleList(SettingList),
     LowAt(i64),
     CriticalAt(i64),
     OtherDevices(bool),
@@ -764,6 +781,7 @@ impl<const WINDOW_MODE: bool> Monitor<WINDOW_MODE> {
 
     fn set_page(&mut self, page: Page) -> Task<Message> {
         self.page = page;
+        self.open_list = None;
         self.confirm_forget.clear();
         if page == Page::Bluetooth {
             return Task::perform(read_bluez(), |state| cosmic::Action::App(Message::Bluez(state)));
@@ -828,17 +846,17 @@ impl<const WINDOW_MODE: bool> Monitor<WINDOW_MODE> {
             "none" => tr("Nothing found").into(),
             _ => tr("Looking for devices …").into(),
         };
-        let mut head = row![
-            tinted(APP_ICON, 32, None, if online > 0 { 1.0 } else { DIM }),
-            column![text::title4(tr("Maprisma Bluetooth Monitor")), dim(meta)].spacing(4),
-            space::horizontal().width(Length::Fill),
-        ]
-        .spacing(12)
-        .align_y(Alignment::Center);
+        let mut words = column![text::title4(tr("Maprisma Bluetooth Monitor")), dim(meta)].spacing(4);
+        // The lowest battery under the words, so the gear keeps its place at the right end.
+        if self.page == Page::Main
+            && let Some(p) = self.lowest(&shown)
+        {
+            words = words.push(container(text::caption(trf("Lowest battery {0}%", &[p.to_string()]))).padding([4, 8]).class(pill_style()));
+        }
+        let mut head = row![tinted(APP_ICON, 32, None, if online > 0 { 1.0 } else { DIM }), container(words).width(Length::Fill)]
+            .spacing(12)
+            .align_y(Alignment::Center);
         if self.page == Page::Main {
-            if let Some(p) = self.lowest(&shown) {
-                head = head.push(container(text::caption(trf("Lowest battery {0}%", &[p.to_string()]))).padding([4, 8]).class(pill_style()));
-            }
             let hidden = self.devices().len() - shown.len();
             if hidden > 0 || self.show_hidden {
                 let label = if self.show_hidden { String::new() } else { hidden.to_string() };
@@ -847,7 +865,12 @@ impl<const WINDOW_MODE: bool> Monitor<WINDOW_MODE> {
                 let eye = if self.show_hidden { eye.class(theme::Button::Suggested) } else { eye };
                 head = head.push(eye.on_press(Message::ToggleShowHidden));
             }
-            head = head.push(icon_button("emblem-system-symbolic", Some(Message::Page(Page::Settings))));
+            // Settings at the header's right end, as in Maprisma Launcher.
+            head = head.push(cosmic::widget::tooltip(
+                button::icon(icon::from_name("emblem-system-symbolic").symbolic(true)).on_press(Message::Page(Page::Settings)),
+                text::body(tr("Settings")),
+                cosmic::widget::tooltip::Position::Bottom,
+            ));
         }
         head.into()
     }
@@ -1231,9 +1254,10 @@ impl<const WINDOW_MODE: bool> Monitor<WINDOW_MODE> {
         col.into()
     }
 
+    /// Settings (as Maprisma Launcher's page): ← Back and the title, then one row per setting,
+    /// words at the left and the control at the right; a value list opens under its row.
     fn settings_page(&self) -> Element<'_, Message> {
         let st = &self.settings;
-        let pct = |v: i64| (json!(v), format!("{v}%"));
         let missing = !list(&self.stats, "denied").is_empty();
         let access: Element<Message> = if missing {
             button::suggested(if self.allowing { tr("Waiting for password …") } else { tr("Allow access") })
@@ -1243,59 +1267,65 @@ impl<const WINDOW_MODE: bool> Monitor<WINDOW_MODE> {
         } else {
             space::horizontal().width(Length::Shrink).into()
         };
-        column![
-            self.page_header(tr("Settings"), None),
-            text::body(tr("Language")),
-            column(i18n::language_choices().into_iter().map(|(code, label)| {
-                let chosen = code == st.language;
-                let b = if chosen { button::suggested(label) } else { button::standard(label) };
-                b.on_press_maybe((!chosen).then_some(Message::Language(code))).into()
-            })).spacing(4),
-            divider::horizontal::default(),
-            column![
-                text::body(tr("Low battery warning")),
-                dim(tr("At this level or less the icon turns orange")),
-                choices([15, 20, 25, 30, 40, 50].into_iter().map(pct).collect(), &json!(st.low_at), |v| {
-                    Message::LowAt(v.as_i64().unwrap_or(25))
-                }),
-            ]
-            .spacing(4),
-            column![
-                text::body(tr("Critical battery warning")),
-                dim(tr("At this level or less the icon turns red")),
-                choices([5, 10, 15, 20].into_iter().map(pct).collect(), &json!(st.critical_at), |v| {
-                    Message::CriticalAt(v.as_i64().unwrap_or(10))
-                }),
-            ]
-            .spacing(4),
-            setting_row(
-                tr("Other Bluetooth devices"),
-                tr("Trackpads, earphones, controllers and more (battery only)"),
-                toggler(st.other_devices).on_toggle(Message::OtherDevices).into(),
-            ),
-            setting_row(tr("Receiver access"), if missing { tr("Not granted") } else { tr("Granted") }, access),
-            divider::horizontal::default(),
-            setting_row(tr("F12 saves a screenshot"), "", toggler(st.screenshot_key).on_toggle(Message::SetShotKey).into()),
-            column![
-                text::body(tr("Corners")),
-                column([
-                    ("desktop", trf("Like the desktop ({0} px)", &[corners::desktop_radius().round().to_string()])),
-                    ("slight", trf("Slightly rounded ({0} px)", &["6".into()])),
-                    ("rounded", trf("Rounded ({0} px)", &["12".into()])),
-                    ("square", tr("Square").to_string()),
-                ]
-                .into_iter()
-                .map(|(choice, label)| {
-                    let chosen = st.corners == choice;
-                    let b = if chosen { button::suggested(label) } else { button::standard(label) };
-                    b.on_press_maybe((!chosen).then(|| Message::Corners(choice.into()))).into()
-                }))
-                .spacing(4),
-            ]
-            .spacing(4),
+        let header = row![
+            button::text(tr("Back")).leading_icon(icon::from_name("go-previous-symbolic").size(16)).on_press(Message::Page(Page::Main)),
+            space::horizontal().width(Length::Fill),
+            dim(tr("Settings").to_uppercase()),
         ]
-        .spacing(12)
-        .into()
+        .align_y(Alignment::Center);
+        let open = self.open_list;
+        // A button showing the current value; its list (✓ the current one) opens under the row.
+        let choice = |which: SettingList, current: String| -> Element<'static, Message> {
+            button::text(current)
+                .trailing_icon(icon::from_name(if open == Some(which) { "pan-up-symbolic" } else { "pan-down-symbolic" }).size(16))
+                .on_press(Message::ToggleList(which))
+                .into()
+        };
+        let options = |items: Vec<(Message, String, bool)>| -> Element<'static, Message> {
+            column(items.into_iter().map(|(message, label, chosen)| {
+                let label = if chosen { format!("✓ {label}") } else { label };
+                button::custom(text::body(label)).class(theme::Button::MenuItem).width(Length::Fill).padding([8, 12]).on_press(message).into()
+            }))
+            .into()
+        };
+        let mut page = column![header, divider::horizontal::default()].spacing(12);
+
+        let languages = i18n::language_choices();
+        let current = languages.iter().find(|(c, _)| *c == st.language).map(|(_, l)| l.clone()).unwrap_or_default();
+        page = page.push(setting_row(tr("Language"), "", choice(SettingList::Language, current)));
+        if open == Some(SettingList::Language) {
+            page = page.push(options(languages.into_iter().map(|(code, label)| { let chosen = code == st.language; (Message::Language(code), label, chosen) }).collect()));
+        }
+
+        let pct = |v: i64| format!("{v}%");
+        page = page.push(setting_row(tr("Low battery warning"), tr("At this level or less the icon turns orange"), choice(SettingList::LowAt, pct(st.low_at))));
+        if open == Some(SettingList::LowAt) {
+            page = page.push(options([15, 20, 25, 30, 40, 50].into_iter().map(|v| (Message::LowAt(v), pct(v), v == st.low_at)).collect()));
+        }
+        page = page.push(setting_row(tr("Critical battery warning"), tr("At this level or less the icon turns red"), choice(SettingList::CriticalAt, pct(st.critical_at))));
+        if open == Some(SettingList::CriticalAt) {
+            page = page.push(options([5, 10, 15, 20].into_iter().map(|v| (Message::CriticalAt(v), pct(v), v == st.critical_at)).collect()));
+        }
+        page = page.push(setting_row(
+            tr("Other Bluetooth devices"),
+            tr("Trackpads, earphones, controllers and more (battery only)"),
+            toggler(st.other_devices).on_toggle(Message::OtherDevices).into(),
+        ));
+        page = page.push(setting_row(tr("Receiver access"), if missing { tr("Not granted") } else { tr("Granted") }, access));
+        page = page.push(setting_row(tr("F12 saves a screenshot"), "", toggler(st.screenshot_key).on_toggle(Message::SetShotKey).into()));
+
+        let corner_choices = [
+            ("desktop", trf("Like the desktop ({0} px)", &[corners::desktop_radius().round().to_string()])),
+            ("slight", trf("Slightly rounded ({0} px)", &["6".into()])),
+            ("rounded", trf("Rounded ({0} px)", &["12".into()])),
+            ("square", tr("Square").to_string()),
+        ];
+        let current = corner_choices.iter().find(|(c, _)| *c == st.corners).map(|(_, l)| l.clone()).unwrap_or_default();
+        page = page.push(setting_row(tr("Corners"), "", choice(SettingList::Corners, current)));
+        if open == Some(SettingList::Corners) {
+            page = page.push(options(corner_choices.into_iter().map(|(c, label)| (Message::Corners(c.into()), label, st.corners == c)).collect()));
+        }
+        page.into()
     }
 
     fn bluetooth_page(&self) -> Element<'_, Message> {
@@ -1439,6 +1469,10 @@ impl<const WINDOW_MODE: bool> cosmic::Application for Monitor<WINDOW_MODE> {
         let mut core = core;
         crate::look::solid(&mut core);
         let mut app = Self { core, window_mode, settings: Settings::load(), ..Default::default() };
+        // Debug builds only: start on the settings page (for off-screen screenshots).
+        if cfg!(debug_assertions) && std::env::var("MAPRISMA_SHOT_PAGE").as_deref() == Ok("settings") {
+            app.page = Page::Settings;
+        }
         if window_mode {
             app.resize = window_size::Debounce::new(window_start_size());
             // Hyprland: back where the user left it (the tray rule first puts it under the bar).
@@ -1639,9 +1673,11 @@ impl<const WINDOW_MODE: bool> cosmic::Application for Monitor<WINDOW_MODE> {
             Message::NoteDone => return self.finish_note(true),
             Message::Escape(id) => {
                 let shown = if self.window_mode { self.core.main_window_id() == Some(id) } else { self.popup == Some(id) };
-                match esc_step(shown, self.shot.open(), !self.confirm_forget.is_empty(), self.page != Page::Main) {
+                let menus = self.page == Page::Settings && self.open_list.is_some();
+                match esc_step(shown, self.shot.open(), !self.confirm_forget.is_empty(), menus, self.page != Page::Main) {
                     EscStep::Note => return self.finish_note(false),
                     EscStep::Confirm => self.confirm_forget.clear(),
+                    EscStep::Menus => self.open_list = None,
                     EscStep::Back => return self.set_page(Page::Main),
                     // Like the window's own close (the tray keeps running); the popup like a click on the icon.
                     EscStep::Close if self.window_mode => return self.update(Message::CloseRequested(id)),
@@ -1658,6 +1694,7 @@ impl<const WINDOW_MODE: bool> cosmic::Application for Monitor<WINDOW_MODE> {
                 self.settings.save();
             }
             Message::Corners(choice) => {
+                self.open_list = None;
                 let choice = corners::normalize(&choice);
                 self.settings.corners = choice.to_string();
                 self.settings.save();
@@ -1699,7 +1736,11 @@ impl<const WINDOW_MODE: bool> cosmic::Application for Monitor<WINDOW_MODE> {
                     self.send(json!({"cmd": "set", "device": device, "key": key, "value": value}));
                 }
             }
+            Message::ToggleList(list) => {
+                self.open_list = if self.open_list == Some(list) { None } else { Some(list) };
+            }
             Message::Language(code) => {
+                self.open_list = None;
                 self.settings.language = code;
                 self.settings.save();
                 i18n::set_language(&self.settings.language);
@@ -1710,10 +1751,12 @@ impl<const WINDOW_MODE: bool> cosmic::Application for Monitor<WINDOW_MODE> {
                 }
             }
             Message::LowAt(v) => {
+                self.open_list = None;
                 self.settings.low_at = v;
                 self.settings.save();
             }
             Message::CriticalAt(v) => {
+                self.open_list = None;
                 self.settings.critical_at = v;
                 self.settings.save();
             }
@@ -2007,13 +2050,14 @@ mod tests {
 
     #[test]
     fn esc_closes_the_innermost_thing_first() {
-        assert_eq!(esc_step(true, true, true, true), EscStep::Note);
-        assert_eq!(esc_step(true, false, true, true), EscStep::Confirm);
-        assert_eq!(esc_step(true, false, false, true), EscStep::Back);
-        assert_eq!(esc_step(true, false, false, false), EscStep::Close);
+        assert_eq!(esc_step(true, true, true, true, true), EscStep::Note);
+        assert_eq!(esc_step(true, false, true, true, true), EscStep::Confirm);
+        assert_eq!(esc_step(true, false, false, true, true), EscStep::Menus);
+        assert_eq!(esc_step(true, false, false, false, true), EscStep::Back);
+        assert_eq!(esc_step(true, false, false, false, false), EscStep::Close);
         // Not from the window or the open popup (e.g. the panel button): nothing.
-        assert_eq!(esc_step(false, true, true, true), EscStep::Nothing);
-        assert_eq!(esc_step(false, false, false, false), EscStep::Nothing);
+        assert_eq!(esc_step(false, true, true, true, true), EscStep::Nothing);
+        assert_eq!(esc_step(false, false, false, false, false), EscStep::Nothing);
     }
 
     #[test]
