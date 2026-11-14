@@ -104,12 +104,13 @@ fn main() -> cosmic::iced::Result {
             let _ = connection.call_method(Some(shared::WINDOW_BUS), "/Window", Some("io.github.ubruckhaus.BluetoothMonitor.Window"), "Close", &());
             return Ok(());
         }
-        let result = cosmic::app::run::<Monitor<true>>(cosmic::app::Settings::default()
+        let result = cosmic::app::run::<Monitor<true>>(cosmic::app::Settings::default().default_font(crate::look::default_font())
             .size({ let (width, height) = window_start_size(); cosmic::iced::Size::new(width, height) })
             .resizable(Some(8.0)).transparent(false).is_daemon(false), true);
         drop(connection);
         result
     } else {
+        crate::look::keep_fonts();
         cosmic::applet::run::<Monitor>(false)
     }
 }
@@ -1797,6 +1798,7 @@ impl<const WINDOW_MODE: bool> cosmic::Application for Monitor<WINDOW_MODE> {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        crate::look::keep_fonts();
         if self.window_mode { return corners::apply_window(&self.settings.corners, self.popup_content()); }
         let horizontal = matches!(self.core.applet.anchor, PanelAnchor::Top | PanelAnchor::Bottom);
         let padding = self.core.applet.suggested_padding(true).0;
@@ -1814,6 +1816,7 @@ impl<const WINDOW_MODE: bool> cosmic::Application for Monitor<WINDOW_MODE> {
     }
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
+        crate::look::keep_fonts();
         if self.window_mode { return corners::apply_window(&self.settings.corners, self.popup_content()); }
         corners::apply(&self.settings.corners, self.core.applet.popup_container(self.popup_content()))
     }
