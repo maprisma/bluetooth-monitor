@@ -1429,6 +1429,8 @@ impl<const WINDOW_MODE: bool> cosmic::Application for Monitor<WINDOW_MODE> {
     }
 
     fn init(core: Core, window_mode: bool) -> (Self, Task<Message>) {
+        let mut core = core;
+        crate::look::solid(&mut core);
         let mut app = Self { core, window_mode, settings: Settings::load(), ..Default::default() };
         if window_mode { app.resize = window_size::Debounce::new(window_start_size()); }
         i18n::set_language(&app.settings.language);
