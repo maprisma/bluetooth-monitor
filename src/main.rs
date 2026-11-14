@@ -754,6 +754,12 @@ impl<const WINDOW_MODE: bool> Monitor<WINDOW_MODE> {
         if let Some(size) = size {
             save_window_size(size);
         }
+        // Hyprland: where the user left it, for the next open (a move sends no event, so on close).
+        if closing && let Some(position) = window_size::current_position() {
+            let mut data = config_value();
+            data[window_size::POSITION_KEY] = window_size::position_value(position);
+            write_config(&data);
+        }
     }
 
     fn set_page(&mut self, page: Page) -> Task<Message> {
@@ -1433,7 +1439,11 @@ impl<const WINDOW_MODE: bool> cosmic::Application for Monitor<WINDOW_MODE> {
         let mut core = core;
         crate::look::solid(&mut core);
         let mut app = Self { core, window_mode, settings: Settings::load(), ..Default::default() };
-        if window_mode { app.resize = window_size::Debounce::new(window_start_size()); }
+        if window_mode {
+            app.resize = window_size::Debounce::new(window_start_size());
+            // Hyprland: back where the user left it (the tray rule first puts it under the bar).
+            window_size::restore_position(window_size::parse_position(config_value().get(window_size::POSITION_KEY).cloned().as_ref()), window_start_size());
+        }
         i18n::set_language(&app.settings.language);
         corners::set_current(&app.settings.corners);
         let task = if window_mode {
