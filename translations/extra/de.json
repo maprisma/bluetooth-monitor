@@ -34,5 +34,13 @@
   "Like the desktop ({0} px)": "Wie der Desktop ({0} px)",
   "Slightly rounded ({0} px)": "Leicht abgerundet ({0} px)",
   "Rounded ({0} px)": "Abgerundet ({0} px)",
-  "Square": "Eckig"
+  "Square": "Eckig",
+  "App skin": "App-Design",
+  "Visual accent for cards and borders; Native keeps your desktop theme untouched.": "Visueller Akzent für Karten und Rahmen; Nativ lässt dein Desktop-Design unverändert.",
+  "Native": "Nativ",
+  "Synthwave": "Synthwave",
+  "Cozy": "Gemütlich",
+  "Terminal": "Terminal",
+  "Disco": "Disco",
+  "Zen": "Zen"
 }
