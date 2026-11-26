@@ -2,11 +2,8 @@ mod i18n;
 use i18n::{tr, trf};
 mod shared;
 mod window_control;
-mod shot;
-mod corners;
-mod look;
 mod skin;
-mod window_size;
+use maprisma_kit::{AppInfo, corners, look, shot, window_size};
 use shared::script_path;
 use skin::{SKIN_KEY, SKINS, normalize_skin, skin_label, skin_style};
 // Bluetooth Monitor for COSMIC: batteries and connections of wireless mice,
@@ -50,9 +47,9 @@ use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 const APP_ID: &str = "io.github.ubruckhaus.CosmicMaprismaBluetoothMonitor";
 const WINDOW_APP_ID: &str = "io.github.ubruckhaus.CosmicMaprismaBluetoothMonitor.Window";
-static NOTE_ID: LazyLock<cosmic::widget::Id> = LazyLock::new(|| cosmic::widget::Id::new("bluetooth-monitor-shot-note"));
+static NOTE_ID: LazyLock<cosmic::widget::Id> = LazyLock::new(cosmic::widget::Id::unique);
 // F12 pictures go to ~/Pictures/<this>/ (the app's name, the same in every language).
-const SHOT_FOLDER: &str = "Maprisma Bluetooth Monitor";
+const SHOT_APP: AppInfo = AppInfo::new(APP_ID, "Maprisma Bluetooth Monitor");
 static AUTOSIZE_ID: LazyLock<Id> = LazyLock::new(|| Id::new("bluetooth-monitor-autosize"));
 
 const RESTART_DELAY: Duration = Duration::from_secs(5); // before a helper that exited starts again
@@ -106,13 +103,13 @@ fn main() -> cosmic::iced::Result {
             let _ = connection.call_method(Some(shared::WINDOW_BUS), "/Window", Some("io.github.ubruckhaus.BluetoothMonitor.Window"), "Close", &());
             return Ok(());
         }
-        let result = cosmic::app::run::<Monitor<true>>(cosmic::app::Settings::default().default_font(crate::look::default_font())
+        let result = cosmic::app::run::<Monitor<true>>(cosmic::app::Settings::default().default_font(look::default_font())
             .size({ let (width, height) = window_start_size(); cosmic::iced::Size::new(width, height) })
             .resizable(Some(8.0)).transparent(false).is_daemon(false), true);
         drop(connection);
         result
     } else {
-        crate::look::keep_fonts();
+        look::keep_fonts();
         cosmic::applet::run::<Monitor>(false)
     }
 }
@@ -1591,7 +1588,7 @@ impl<const WINDOW_MODE: bool> cosmic::Application for Monitor<WINDOW_MODE> {
 
     fn init(core: Core, window_mode: bool) -> (Self, Task<Message>) {
         let mut core = core;
-        crate::look::solid(&mut core);
+        look::solid(&mut core);
         let mut app = Self { core, window_mode, settings: Settings::load(), ..Default::default() };
         // Debug builds only: start on the settings page (for off-screen screenshots).
         if cfg!(debug_assertions) && std::env::var("MAPRISMA_SHOT_PAGE").as_deref() == Ok("settings") {
@@ -1780,7 +1777,7 @@ impl<const WINDOW_MODE: bool> cosmic::Application for Monitor<WINDOW_MODE> {
             Message::Captured(picture) => {
                 if !std::mem::take(&mut self.capturing) { return Task::none(); }
                 let (width, height) = (picture.size.width, picture.size.height);
-                return off_thread(move || shot::save_screenshot(SHOT_FOLDER, &picture.rgba, width, height), Message::ShotSaved);
+                return off_thread(move || shot::save_screenshot_for(&SHOT_APP, &picture.rgba, width, height), Message::ShotSaved);
             }
             Message::ShotSaved(result) => {
                 self.shot = match result {
@@ -1983,7 +1980,7 @@ impl<const WINDOW_MODE: bool> cosmic::Application for Monitor<WINDOW_MODE> {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        crate::look::keep_fonts();
+        look::keep_fonts();
         if self.window_mode { return self.themed_window_content(); }
         let horizontal = matches!(self.core.applet.anchor, PanelAnchor::Top | PanelAnchor::Bottom);
         let padding = self.core.applet.suggested_padding(true).0;
@@ -2001,7 +1998,7 @@ impl<const WINDOW_MODE: bool> cosmic::Application for Monitor<WINDOW_MODE> {
     }
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
-        crate::look::keep_fonts();
+        look::keep_fonts();
         if self.window_mode { return self.themed_window_content(); }
         match active_theme(&self.settings.skin, &self.settings.corners) {
             Some(theme) => {
@@ -2039,7 +2036,7 @@ impl<const WINDOW_MODE: bool> Monitor<WINDOW_MODE> {
                     // Busy until the note is written, so a new F12 cannot replace it.
                     self.shot = shot::Phase::Noting;
                     return off_thread(
-                        move || shot::save_note(&path, SHOT_FOLDER, &text).map(|_| ()).map_err(|e| e.to_string()),
+                        move || shot::save_note_for(&SHOT_APP, &path, &text).map(|_| ()).map_err(|e| e.to_string()),
                         Message::NoteSaved,
                     );
                 }
@@ -2060,31 +2057,21 @@ impl<const WINDOW_MODE: bool> Monitor<WINDOW_MODE> {
 
     // After F12: "Screenshot saved", where, the optional note and Done (or the error and Done).
     fn shot_overlay(&self) -> Option<Element<'_, Message>> {
-        let body: Element<Message> = match &self.shot {
-            shot::Phase::Note { shown, text: note, .. } => column![
-                text::heading(tr("Screenshot saved").to_string()),
-                dim(trf("Saved as {0}", &[shown.clone()])),
-                cosmic::widget::text_input(tr("What is wrong? (optional)").to_string(), note.as_str())
-                    .id(NOTE_ID.clone())
-                    .on_input(Message::NoteInput)
-                    .on_submit(|_| Message::NoteDone),
-                row![space::horizontal().width(Length::Fill), button::suggested(tr("Done").to_string()).on_press(Message::NoteDone)],
-            ]
-            .spacing(12)
-            .into(),
-            shot::Phase::Error(reason) => column![
-                text::body(reason.clone()),
-                row![space::horizontal().width(Length::Fill), button::suggested(tr("Done").to_string()).on_press(Message::NoteDone)],
-            ]
-            .spacing(12)
-            .into(),
-            _ => return None,
+        let labels = shot::ShotLabels {
+            saved_heading: tr("Screenshot saved").to_string(),
+            saved_as_template: tr("Saved as {0}").to_string(),
+            note_placeholder: tr("What is wrong? (optional)").to_string(),
+            done_button: tr("Done").to_string(),
+            save_error_template: tr("The screenshot could not be saved: {0}").to_string(),
+            note_error_template: tr("The note could not be saved: {0}").to_string(),
         };
-        let card = container(body).padding(16).width(Length::Fill).class(
-            if skin_style(&self.settings.skin).is_some() { sub_card_style(&self.settings.skin) } else { theme::Container::Card }
-        );
-        let card = container(card).padding(12).width(if self.window_mode { Length::Fill } else { Length::Fixed(POPUP_WIDTH) });
-        Some(card.into())
+        let style = if skin_style(&self.settings.skin).is_some() {
+            sub_card_style(&self.settings.skin)
+        } else {
+            theme::Container::Card
+        };
+        let width = if self.window_mode { Length::Fill } else { Length::Fixed(POPUP_WIDTH) };
+        shot::note_overlay(&self.shot, NOTE_ID.clone(), &labels, style, width, Message::NoteInput, Message::NoteDone)
     }
 
     fn popup_content(&self) -> Element<'_, Message> {
