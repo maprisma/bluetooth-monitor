@@ -3216,7 +3216,7 @@ dependencies = [
 
 [[package]]
 name = "maprisma-bluetooth-monitor"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "libcosmic",
  "maprisma-kit",
