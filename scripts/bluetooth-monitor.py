@@ -757,7 +757,9 @@ BLUEZ_DUMP = ["busctl", "--system", "--json=short", "call", "org.bluez", "/",
 
 
 def parse_bluez(text):
-    """Paired, connected peripherals from BlueZ's GetManagedObjects (busctl JSON)."""
+    """Known (paired or trusted), connected peripherals from BlueZ's GetManagedObjects
+    (busctl JSON). Trusted counts like on the Bluetooth page: BLE devices without bonding
+    (Spark amps and other GATT gear) never pair, they are only trusted and connected."""
     try:
         objects = json.loads(text)["data"][0]
     except (ValueError, KeyError, IndexError, TypeError):
@@ -773,7 +775,8 @@ def parse_bluez(text):
         def val(key, default=None):
             v = dev.get(key)
             return v.get("data", default) if isinstance(v, dict) else default
-        if val("Paired") is not True or val("Connected") is not True:
+        known = val("Paired") is True or val("Trusted") is True or val("Bonded") is True
+        if not known or val("Connected") is not True:
             continue
         icon = val("Icon", "")
         kind = BLUEZ_KINDS.get(icon if isinstance(icon, str) else "")

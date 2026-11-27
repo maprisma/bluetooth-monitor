@@ -328,11 +328,15 @@ class BluezTest(unittest.TestCase):
         "/org/bluez/hci0/dev_D4_8D_26_7D_9D_85": dict(Name="TV", Connected=True, Paired=False, Address="D4:8D:26:7D:9D:85"),
         "/org/bluez/hci0/dev_11_22_33_44_55_66": dict(Name="Laptop", Icon="computer", Connected=True, Paired=True,
                                                       Address="11:22:33:44:55:66"),
+        # BLE gear without bonding: never paired, only trusted (the Spark amp).
+        "/org/bluez/hci0/dev_F7_EB_ED_15_2A_13": dict(Name="Spark MINI BLE", Alias="Spark MINI BLE", Connected=True,
+                                                      Paired=False, Trusted=True, Address="F7:EB:ED:15:2A:13"),
     })
 
-    def test_only_paired_connected_peripherals(self):
+    def test_only_known_connected_peripherals(self):
         devs = {d["name"]: d for d in ld.parse_bluez(self.DUMP)}
-        self.assertEqual(sorted(devs), ["AirPods Max", "MX KEYS S"])
+        self.assertEqual(sorted(devs), ["AirPods Max", "MX KEYS S", "Spark MINI BLE"])
+        self.assertEqual(devs["Spark MINI BLE"]["kind"], "device")
         air = devs["AirPods Max"]
         self.assertEqual((air["kind"], air["key"], air["battery"], air["connection"]),
                          ("headset", "bt:F8:73:DF:22:16:63", None, "bluetooth"))
@@ -340,7 +344,8 @@ class BluezTest(unittest.TestCase):
     def test_merge_skips_devices_shown_elsewhere(self):
         hidpp = [{"name": "MX Keys S"}]
         upower = [{"name": "Other", "native": "/org/bluez/hci0/dev_F8_73_DF_22_16_63"}]
-        self.assertEqual(ld.merge_bluez(hidpp + upower, ld.parse_bluez(self.DUMP)), [])
+        merged = ld.merge_bluez(hidpp + upower, ld.parse_bluez(self.DUMP))
+        self.assertEqual([d["name"] for d in merged], ["Spark MINI BLE"])  # shown nowhere else
 
     def test_garbage_and_hostile_input(self):
         for text in ("", "not json", "[]", '{"data": []}', '{"data": [42]}', '{"data": [{"/x": 1}]}'):
